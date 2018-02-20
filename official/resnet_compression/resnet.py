@@ -556,13 +556,13 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
                                           scope='mentee')   
 
   with tf.variable_scope('regularizers'):                                       
-  if weight_decay_coeff > 0:
-      l2_mentor = weight_decay_coeff * tf.add_n(
-          [tf.nn.l2_loss(v) for v in mentor_variables
-          if loss_filter_fn(v.name)])
-      l2_mentee = weight_decay_coeff * tf.add_n(
-          [tf.nn.l2_loss(v) for v in mentee_variables
-          if loss_filter_fn(v.name)])          
+    if weight_decay_coeff > 0:
+        l2_mentor = weight_decay_coeff * tf.add_n(
+            [tf.nn.l2_loss(v) for v in mentor_variables
+            if loss_filter_fn(v.name)])
+        l2_mentee = weight_decay_coeff * tf.add_n(
+            [tf.nn.l2_loss(v) for v in mentee_variables
+            if loss_filter_fn(v.name)])          
     else:
       l2_mentor = tf.constant(0.)
       l2_mentee = tf.constant(0.)    
