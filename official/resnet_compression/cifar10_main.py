@@ -146,7 +146,7 @@ class Cifar10Model(resnet.Model):
     if resnet_size[1] % 6 != 2:
       raise ValueError('resnet_size must be 6n + 2:', resnet_size[1])
 
-    num_blocks = [ (resnet_size[0] - 2) // 6, (resnet_size[0] - 2) // 6 ]
+    num_blocks = [ (resnet_size[0] - 2) // 6, (resnet_size[1] - 2) // 6 ]
 
     super(Cifar10Model, self).__init__(
         resnet_size=resnet_size,
