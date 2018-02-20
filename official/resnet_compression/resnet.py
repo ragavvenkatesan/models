@@ -408,7 +408,8 @@ class Model(object):
 
       mentee = tf.reshape(mentee, [-1, self.final_size])
       mentee = tf.layers.dense(inputs=mentee, units=self.num_classes)
-    mentee = tf.identity(mentee, 'mentee_' + 'final_dense')   
+      mentee = tf.identity(mentee, 'mentee_' + 'final_dense')   
+
     return (mentor, mentee)
 
 ################################################################################
@@ -435,7 +436,7 @@ def learning_rate_with_decay(
     trained so far (global_step)- and returns the learning rate to be used
     for training the next batch.
   """
-  initial_learning_rate = 0.1 * batch_size / batch_denom
+  initial_learning_rate = 0.01 * batch_size / batch_denom
   batches_per_epoch = num_images / batch_size
 
   # Multiply the learning rate by 0.1 at 100, 150, and 200 epochs.
@@ -452,7 +453,7 @@ def learning_rate_with_decay(
 def resnet_model_fn(features, labels, mode, model_class, trainee, 
                     distillation_coeff, probes_coeff, resnet_size, num_probes,
                     weight_decay_coeff, learning_rate_fn, momentum, data_format,
-                    temperature = 1, optimizer = 'adam', loss_filter_fn=None):
+                    temperature=1, optimizer='momentum', loss_filter_fn=None):
   """Shared functionality for different resnet model_fns.
 
   Initializes the ResnetModel representing the model layers
@@ -499,37 +500,49 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
   model = model_class(resnet_size, data_format)
   logits_mentor, logits_mentee = model(features, 
                                        mode == tf.estimator.ModeKeys.TRAIN)
+
+  predictions_mentor = {
+      'classes': tf.argmax(logits_mentor, axis=1),
+      'probabilities': tf.nn.softmax(logits_mentor,  
+                       name='softmax_tensor_mentor'),
+  }
+
+  predictions_mentee = {
+      'classes': tf.argmax(logits_mentee, axis=1),
+      'probabilities': tf.nn.softmax(logits_mentee,  
+                       name='softmax_tensor_mentee'),
+  }
+
+  if mode == tf.estimator.ModeKeys.PREDICT:
+    if trainee == 'mentor':
+      return tf.estimator.EstimatorSpec(mode=mode, 
+              predictions=predictions_mentor)
+    elif trainee == 'mentee':
+      return tf.estimator.EstimatorSpec(mode=mode, 
+              predictions=predictions_mentee)
+
   temperature_softmax_mentor = tf.nn.softmax((tf.div(logits_mentor, 
                       temperature)), name ='softmax_temperature_tensor_mentor')
   distillation_loss = tf.reduce_sum (tf.nn.softmax_cross_entropy_with_logits(
                                     logits = tf.div(logits_mentee,temperature),
                                     labels = temperature_softmax_mentor))
+                                    
   tf.identity(distillation_loss, name='distillation_loss')
   tf.summary.scalar('distillation_loss', distillation_loss)
   tf.summary.scalar('scaled_distillation_loss', distillation_coeff *
                       distillation_loss)
 
-  if trainee=='mentor':
-    logits_to_be_trained = logits_mentor
-  elif trainee=='mentee':
-    logits_to_be_trained = logits_mentee 
-
-  predictions = {
-      'classes': tf.argmax(logits_to_be_trained, axis=1),
-      'probabilities': tf.nn.softmax(logits_to_be_trained,  
-                       name='softmax_tensor'),
-  }
-
-  if mode == tf.estimator.ModeKeys.PREDICT:
-    return tf.estimator.EstimatorSpec(mode=mode, predictions=predictions)
-
   # Calculate loss, which includes softmax cross entropy and L2 regularization.
-  cross_entropy = tf.losses.softmax_cross_entropy(
-      logits=logits_to_be_trained, onehot_labels=labels)
+  cross_entropy_mentor = tf.losses.softmax_cross_entropy(
+      logits=logits_mentor, onehot_labels=labels)
+  cross_entropy_mentee = tf.losses.softmax_cross_entropy(
+      logits=logits_mentee, onehot_labels=labels)
 
   # Create a tensor named cross_entropy for logging purposes.
-  tf.identity(cross_entropy, name='cross_entropy' + '_' + trainee)
-  tf.summary.scalar('cross_entropy' + '_' + trainee, cross_entropy)
+  tf.identity(cross_entropy_mentor, name='cross_entropy_mentor')
+  tf.summary.scalar('cross_entropy_mentor', cross_entropy_mentor)
+  tf.identity(cross_entropy_mentee, name='cross_entropy_mentee')
+  tf.summary.scalar('cross_entropy_mentee', cross_entropy_mentee)
 
   # If no loss_filter_fn is passed, assume we want the default behavior,
   # which is that batch_normalization variables are excluded from loss.
@@ -537,59 +550,99 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
     def loss_filter_fn(name):
       return 'batch_normalization' not in name
 
-  trainable_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
-                                          scope=trainee)
+  mentor_variables=tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
+                                          scope='mentor')
+  mentee_variables=tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
+                                          scope='mentee')   
+
+  with tf.variable_scope('regularizers'):                                       
   if weight_decay_coeff > 0:
-    l2 = weight_decay_coeff * tf.add_n(
-        [tf.nn.l2_loss(v) for v in trainable_variables
-        if loss_filter_fn(v.name)])
-  else:
-    l2 = tf.constant(0.)
+      l2_mentor = weight_decay_coeff * tf.add_n(
+          [tf.nn.l2_loss(v) for v in mentor_variables
+          if loss_filter_fn(v.name)])
+      l2_mentee = weight_decay_coeff * tf.add_n(
+          [tf.nn.l2_loss(v) for v in mentee_variables
+          if loss_filter_fn(v.name)])          
+    else:
+      l2_mentor = tf.constant(0.)
+      l2_mentee = tf.constant(0.)    
 
-  # Add weight decay to the loss.
-  loss = cross_entropy + weight_decay_coeff * l2
-
-  if trainee == 'mentee':
-    loss = cross_entropy + l2 + distillation_coeff * distillation_loss 
+  # Add weight decay and distillation to the loss.
+  loss_mentor = cross_entropy_mentor + weight_decay_coeff * l2_mentor
+  loss_mentee = cross_entropy_mentee + weight_decay_coeff * l2_mentee + \
+                  distillation_coeff * distillation_loss 
 
   if mode == tf.estimator.ModeKeys.TRAIN:
-    global_step = tf.train.get_or_create_global_step()
-    learning_rate = learning_rate_fn(global_step)
+    global_step_mentor = tf.train.get_or_create_global_step()
+    global_step_mentee = tf.train.get_or_create_global_step()    
+    learning_rate_mentor = learning_rate_fn(global_step_mentor)
+    learning_rate_mentee = learning_rate_fn(global_step_mentee)
 
     # Create a tensor named learning_rate for logging purposes
-    tf.identity(learning_rate, name='learning_rate' + '_' + trainee)
-    tf.summary.scalar('learning_rate' + '_' + trainee, learning_rate)
+    tf.identity(learning_rate_mentor, name='learning_rate_mentor' )
+    tf.summary.scalar('learning_rate_mentor', learning_rate_mentor)
+    tf.identity(learning_rate_mentee, name='learning_rate_mentee' )
+    tf.summary.scalar('learning_rate_mentee', learning_rate_mentee)
 
     if optimizer == 'momentum':
-      optimizer = tf.train.MomentumOptimizer(
-        learning_rate=learning_rate,
+      optimizer_mentor = tf.train.MomentumOptimizer(
+        learning_rate=learning_rate_mentor,
         momentum=momentum)
+      optimizer_mentee = tf.train.MomentumOptimizer(
+        learning_rate=learning_rate_mentee,
+        momentum=momentum)
+
     elif optimizer == 'adam':
-      optimizer = tf.train.AdamOptimizer(
-        learning_rate=learning_rate)
+      optimizer_mentor = tf.train.AdamOptimizer(
+        learning_rate=learning_rate_mentor)
+      optimizer_mentee = tf.train.AdamOptimizer(
+        learning_rate=learning_rate_mentee)
 
     # Batch norm requires update ops to be added as a dependency to train_op
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):
-      train_op = optimizer.minimize(loss, global_step, 
-                                    var_list = trainable_variables)
+      train_op_mentor = optimizer_mentor.minimize(loss_mentor, 
+                                    global_step_mentor, 
+                                    var_list = mentor_variables)
+      train_op_mentee = optimizer_mentee.minimize(loss_mentee, 
+                                    global_step_mentee, 
+                                    var_list = mentee_variables)                                    
   else:
-    train_op = None
+    train_op_mentor = None
+    train_op_mentee = None
 
-  accuracy = tf.metrics.accuracy(
-      tf.argmax(labels, axis=1), predictions['classes'])
-  metrics = {'accuracy': accuracy}
+  accuracy_mentor = tf.metrics.accuracy(
+      tf.argmax(labels, axis=1), predictions_mentor['classes'])
+  accuracy_mentee = tf.metrics.accuracy(
+      tf.argmax(labels, axis=1), predictions_mentee['classes'])      
+  metrics = {'accuracy_mentor': accuracy_mentor,
+             'accuracy_mentee': accuracy_mentee}
 
   # Create a tensor named train_accuracy for logging purposes
-  tf.identity(accuracy[1], name='train_accuracy' + '_' + trainee)
-  tf.summary.scalar('train_accuracy' + '_' + trainee, accuracy[1])
+  tf.identity(accuracy_mentor[1], name='train_accuracy_mentor')
+  tf.summary.scalar('train_accuracy_mentor', accuracy_mentor[1])
+  tf.identity(accuracy_mentee[1], name='train_accuracy_mentee')
+  tf.summary.scalar('train_accuracy_mentee', accuracy_mentee[1])
 
-  return tf.estimator.EstimatorSpec(
-      mode=mode,
-      predictions=predictions,
-      loss=loss,
-      train_op=train_op,
-      eval_metric_ops=metrics)
+  saver=tf.train.Saver(var_list = tf.global_variables())
+
+  if trainee == 'mentor':
+    return tf.estimator.EstimatorSpec(
+        mode=mode,
+        predictions=predictions_mentor,
+        loss=loss_mentor,
+        train_op=train_op_mentor,
+        scaffold=tf.train.Scaffold(saver=saver),
+        eval_metric_ops=metrics)
+
+  elif trainee == 'mentee':
+    return tf.estimator.EstimatorSpec(
+        mode=mode,
+        predictions=predictions_mentee,
+        loss=loss_mentee,
+        train_op=train_op_mentee,
+        scaffold=tf.train.Scaffold(saver=saver),
+        eval_metric_ops=metrics)
 
 
 def resnet_main(flags, model_function, input_function):
@@ -597,7 +650,6 @@ def resnet_main(flags, model_function, input_function):
   os.environ['TF_ENABLE_WINOGRAD_NONFUSED'] = '1'
   
   # Set up a RunConfig to only save checkpoints once per training cycle.
-  trainee = 'mentor'
   run_config = tf.estimator.RunConfig().replace(save_checkpoints_secs=1e9)
   mentor = tf.estimator.Estimator(
       model_fn=model_function, model_dir=flags.model_dir, 
@@ -612,14 +664,14 @@ def resnet_main(flags, model_function, input_function):
           'optimizer': flags.optimizer,
           'temperature': flags.temperature,
           'num_probes': flags.num_probes,
-          'trainee': trainee
+          'trainee': 'mentor'
       })
 
   for i in range(flags.train_epochs // flags.epochs_per_eval):
     tensors_to_log = {
-        'learning_rate': 'learning_rate' + '_' + trainee,
-        'cross_entropy': 'cross_entropy' + '_' + trainee,
-        'train_accuracy': 'train_accuracy' + '_' + trainee
+        'learning_rate': 'learning_rate_mentor',
+        'cross_entropy': 'cross_entropy_mentor' ,
+        'train_accuracy': 'train_accuracy_mentor'
     }
 
     logging_hook = tf.train.LoggingTensorHook(
@@ -629,8 +681,11 @@ def resnet_main(flags, model_function, input_function):
       return input_function(True, flags.data_dir, flags.batch_size,
                             flags.epochs_per_eval, flags.num_parallel_calls)
 
-    print('Starting a mentor training cycle. [' + str(i) + '/' 
+    print(' *********************** ' )
+    print(' Starting a mentor training cycle. [' + str(i) + '/' 
             + str(flags.train_epochs // flags.epochs_per_eval) + ']')
+    print(' *********************** ' )            
+    
     mentor.train(input_fn=input_fn_train, hooks=[logging_hook])
 
     print('Starting to evaluate.')
@@ -642,7 +697,6 @@ def resnet_main(flags, model_function, input_function):
     eval_results = mentor.evaluate(input_fn=input_fn_eval)
     print(eval_results)
 
-  trainee = 'mentee'
   mentee = tf.estimator.Estimator(
       model_fn=model_function, model_dir=flags.model_dir, 
       config=run_config,
@@ -656,14 +710,14 @@ def resnet_main(flags, model_function, input_function):
           'weight_decay_coeff': flags.weight_decay_coeff,          
           'temperature': flags.temperature,
           'num_probes': flags.num_probes,                 
-          'trainee': trainee
+          'trainee': 'mentee'
       })
 
   for _ in range(flags.train_epochs // flags.epochs_per_eval):
     tensors_to_log = {
-        'learning_rate': 'learning_rate' + '_' + trainee,
-        'cross_entropy': 'cross_entropy' + '_' + trainee,
-        'train_accuracy': 'train_accuracy' + '_' + trainee,
+        'learning_rate': 'learning_rate_mentee',
+        'cross_entropy': 'cross_entropy_mentee',
+        'train_accuracy': 'train_accuracy_mentee',
         'distillation_loss': 'distillation_loss'
     }
 
@@ -674,8 +728,11 @@ def resnet_main(flags, model_function, input_function):
       return input_function(True, flags.data_dir, flags.batch_size,
                             flags.epochs_per_eval, flags.num_parallel_calls)
 
-    print('Starting a mentor training cycle. [' + str(i) + '/' 
+    print(' *********************** ' )
+    print(' Starting a mentor training cycle. [' + str(i) + '/' 
             + str(flags.train_epochs // flags.epochs_per_eval) + ']')
+    print(' *********************** ' )
+
     mentee.train(input_fn=input_fn_train, hooks=[logging_hook])
 
     print('Starting to evaluate.')

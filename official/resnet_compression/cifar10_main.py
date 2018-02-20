@@ -207,7 +207,7 @@ if __name__ == '__main__':
                       model_dir='./cifar10_model',
                       resnet_size_mentee=2 * 6+2,
                       resnet_size_mentor=10 * 6+2,
-                      train_epochs=50,
+                      train_epochs=100,
                       epochs_per_eval=10,
                       distillation_coeff = 0.01,
                       probe_coeff = 0.1,
