@@ -90,3 +90,6 @@ ENV/
 
 # PyCharm
 .idea/
+.DS_Store
+research/.DS_Store
+research/compression/.DS_Store
