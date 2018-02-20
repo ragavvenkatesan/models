@@ -723,7 +723,7 @@ def resnet_main(flags, model_function, input_function):
           'trainee': 'mentee'
       })
 
-  for _ in range(flags.train_epochs // flags.epochs_per_eval):
+  for i in range(flags.train_epochs // flags.epochs_per_eval):
     tensors_to_log = {
         'learning_rate': 'learning_rate_mentee',
         'cross_entropy': 'cross_entropy_mentee',
@@ -739,7 +739,7 @@ def resnet_main(flags, model_function, input_function):
                             flags.epochs_per_eval, flags.num_parallel_calls)
 
     print(' *********************** ' )
-    print(' Starting a mentor training cycle. [' + str(i) + '/' 
+    print(' Starting a mentee training cycle. [' + str(i) + '/' 
             + str(flags.train_epochs // flags.epochs_per_eval) + ']')
     print(' *********************** ' )
 
