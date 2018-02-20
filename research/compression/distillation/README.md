@@ -1,4 +1,4 @@
-# ResNet in TensorFlow
+# Distillation of ResNet in TensorFlow
 
 Deep residual networks, or ResNets for short, provided the breakthrough idea of identity mappings in order to enable training of very deep convolutional neural networks. This folder contains an implementation of ResNet for the ImageNet dataset written in TensorFlow.
 
@@ -10,6 +10,9 @@ See the following papers for more background:
 
 Please proceed according to which dataset you would like to train/evaluate on:
 
+Here, I add to this [tennsorfow's original renet installation](https://github.com/tensorflow/models/tree/master/official/resnet) by running 
+two of the resnets in parallel with one distilling and mentoring from another.
+I will soon publish my results in a paper or a blog. 
 
 ## CIFAR-10
 
@@ -33,6 +36,7 @@ Use `--data_dir` to specify the location of the CIFAR-10 data used in the previo
 
 
 ## ImageNet
+Imagenet is not written at the moment. I will add soon. 
 
 ### Setup
 To begin, you will need to download the ImageNet dataset and convert it to TFRecord format. Follow along with the [Inception guide](https://github.com/tensorflow/models/tree/master/research/inception#getting-started) in order to prepare the dataset.
