@@ -338,12 +338,12 @@ class Model(object):
     Returns:
       A logits Tensor with shape [<batch_size>, self.num_classes].
     """
-
-    if self.data_format == 'channels_first':
-      # Convert the inputs from channels_last (NHWC) to channels_first (NCHW).
-      # This provides a large performance boost on GPU. See
-      # https://www.tensorflow.org/performance/performance_guide#data_formats
-      inputs = tf.transpose(inputs, [0, 3, 1, 2])
+    with tf.variable_Scope('input_transforms'):
+      if self.data_format == 'channels_first':
+        # Convert the inputs from channels_last (NHWC) to channels_first (NCHW).
+        # This provides a large performance boost on GPU. See
+        # https://www.tensorflow.org/performance/performance_guide#data_formats
+        inputs = tf.transpose(inputs, [0, 3, 1, 2])
     with tf.variable_scope('mentor') as scope:
     # mentor
       mentor = conv2d_fixed_padding(
@@ -436,17 +436,19 @@ def learning_rate_with_decay(
     trained so far (global_step)- and returns the learning rate to be used
     for training the next batch.
   """
-  initial_learning_rate = 0.01 * batch_size / batch_denom
-  batches_per_epoch = num_images / batch_size
+  with tf.variable_scope('learning_rate'):
+    initial_learning_rate = 0.01 * batch_size / batch_denom
+    batches_per_epoch = num_images / batch_size
 
-  # Multiply the learning rate by 0.1 at 100, 150, and 200 epochs.
-  boundaries = [int(batches_per_epoch * epoch) for epoch in boundary_epochs]
-  vals = [initial_learning_rate * decay for decay in decay_rates]
+    # Multiply the learning rate by 0.1 at 100, 150, and 200 epochs.
+    boundaries = [int(batches_per_epoch * epoch) for epoch in boundary_epochs]
+    vals = [initial_learning_rate * decay for decay in decay_rates]
 
-  def learning_rate_fn(global_step):
-    global_step = tf.cast(global_step, tf.int32)
-    return tf.train.piecewise_constant(global_step, boundaries, vals)
-
+    def learning_rate_fn(global_step):
+      global_step = tf.cast(global_step, tf.int32)
+      rval = tf.train.piecewise_constant(global_step, boundaries, vals)
+      tf.summary.scalar('global_lr', rval)
+      return rval
   return learning_rate_fn
 
 
@@ -493,9 +495,9 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
     EstimatorSpec parameterized according to the input params and the
     current mode.
   """
-
-  # Generate a summary node for the images
-  tf.summary.image('images', features, max_outputs=6)
+  with tf.variable_scope('inputs'):
+    # Generate a summary node for the images
+    tf.summary.image('images', features, max_outputs=6)
 
   model = model_class(resnet_size, data_format)
   logits_mentor, logits_mentee = model(features, 
@@ -520,29 +522,30 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
     elif trainee == 'mentee':
       return tf.estimator.EstimatorSpec(mode=mode, 
               predictions=predictions_mentee)
-
-  temperature_softmax_mentor = tf.nn.softmax((tf.div(logits_mentor, 
-                      temperature)), name ='softmax_temperature_tensor_mentor')
-  distillation_loss = tf.reduce_sum (tf.nn.softmax_cross_entropy_with_logits(
-                                    logits = tf.div(logits_mentee,temperature),
-                                    labels = temperature_softmax_mentor))
+  with tf.variable_scope('distillery'):
+    temperature_softmax_mentor = tf.nn.softmax((tf.div(logits_mentor, 
+                        temperature)), name ='softmax_temperature_tensor_mentor')
+    distillation_loss = tf.reduce_sum (tf.nn.softmax_cross_entropy_with_logits(
+                                      logits = tf.div(logits_mentee,temperature),
+                                      labels = temperature_softmax_mentor))
                                     
-  tf.identity(distillation_loss, name='distillation_loss')
-  tf.summary.scalar('distillation_loss', distillation_loss)
-  tf.summary.scalar('scaled_distillation_loss', distillation_coeff *
-                      distillation_loss)
+    tf.identity(distillation_loss, name='distillation_loss')
+    tf.summary.scalar('distillation_loss', distillation_loss)
+    tf.summary.scalar('scaled_distillation_loss', distillation_coeff *
+                        distillation_loss)
 
-  # Calculate loss, which includes softmax cross entropy and L2 regularization.
-  cross_entropy_mentor = tf.losses.softmax_cross_entropy(
-      logits=logits_mentor, onehot_labels=labels)
-  cross_entropy_mentee = tf.losses.softmax_cross_entropy(
-      logits=logits_mentee, onehot_labels=labels)
-
-  # Create a tensor named cross_entropy for logging purposes.
-  tf.identity(cross_entropy_mentor, name='cross_entropy_mentor')
-  tf.summary.scalar('cross_entropy_mentor', cross_entropy_mentor)
-  tf.identity(cross_entropy_mentee, name='cross_entropy_mentee')
-  tf.summary.scalar('cross_entropy_mentee', cross_entropy_mentee)
+  with tf.variable_scope('mentor_cross_entropy'):
+    # Calculate loss, which includes softmax cross entropy and L2 regularization.
+    cross_entropy_mentor = tf.losses.softmax_cross_entropy(
+        logits=logits_mentor, onehot_labels=labels)
+    # Create a tensor named cross_entropy for logging purposes.
+    tf.identity(cross_entropy_mentor, name='cross_entropy_mentor')
+    tf.summary.scalar('cross_entropy_mentor', cross_entropy_mentor)        
+  with tf.variable_scope('mentee_cross_entropy'):        
+    cross_entropy_mentee = tf.losses.softmax_cross_entropy(
+        logits=logits_mentee, onehot_labels=labels)
+    tf.identity(cross_entropy_mentee, name='cross_entropy_mentee')
+    tf.summary.scalar('cross_entropy_mentee', cross_entropy_mentee)
 
   # If no loss_filter_fn is passed, assume we want the default behavior,
   # which is that batch_normalization variables are excluded from loss.
@@ -567,40 +570,47 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
       l2_mentor = tf.constant(0.)
       l2_mentee = tf.constant(0.)    
 
-  # Add weight decay and distillation to the loss.
-  loss_mentor = cross_entropy_mentor + weight_decay_coeff * l2_mentor
-  loss_mentee = cross_entropy_mentee + weight_decay_coeff * l2_mentee + \
+  with tf.variable_scope('mentor_cumulative_loss'):
+    # Add weight decay and distillation to the loss.
+    loss_mentor = cross_entropy_mentor + weight_decay_coeff * l2_mentor
+  with tf.variable_scope('mentee_cumulative_loss'): 
+    loss_mentee = cross_entropy_mentee + weight_decay_coeff * l2_mentee + \
                   distillation_coeff * distillation_loss 
 
   if mode == tf.estimator.ModeKeys.TRAIN:
-    global_step_mentor = tf.train.get_or_create_global_step()
-    global_step_mentee = tf.train.get_or_create_global_step()    
-    learning_rate_mentor = learning_rate_fn(global_step_mentor)
-    learning_rate_mentee = learning_rate_fn(global_step_mentee)
-
-    # Create a tensor named learning_rate for logging purposes
-    tf.identity(learning_rate_mentor, name='learning_rate_mentor' )
-    tf.summary.scalar('learning_rate_mentor', learning_rate_mentor)
-    tf.identity(learning_rate_mentee, name='learning_rate_mentee' )
-    tf.summary.scalar('learning_rate_mentee', learning_rate_mentee)
+    with tf.variable_scope('learning_rates'):
+      global_step_mentor = tf.train.get_or_create_global_step()
+      global_step_mentee = tf.train.get_or_create_global_step()    
+      learning_rate_mentor = learning_rate_fn(global_step_mentor)
+      learning_rate_mentee = learning_rate_fn(global_step_mentee)
+      # Create a tensor named learning_rate for logging purposes
+      tf.identity(learning_rate_mentor, name='learning_rate_mentor' )
+      tf.summary.scalar('learning_rate_mentor', learning_rate_mentor)
+      tf.identity(learning_rate_mentee, name='learning_rate_mentee' )
+      tf.summary.scalar('learning_rate_mentee', learning_rate_mentee)
 
     if optimizer == 'momentum':
-      optimizer_mentor = tf.train.MomentumOptimizer(
-        learning_rate=learning_rate_mentor,
-        momentum=momentum)
-      optimizer_mentee = tf.train.MomentumOptimizer(
-        learning_rate=learning_rate_mentee,
-        momentum=momentum)
+      with tf.variable_scope('mentor_momentum_optimizer'):    
+        optimizer_mentor = tf.train.MomentumOptimizer(
+          learning_rate=learning_rate_mentor,
+          momentum=momentum)
+      with tf.variable_scope('mentee_momentum_optimizer'):              
+        optimizer_mentee = tf.train.MomentumOptimizer(
+          learning_rate=learning_rate_mentee,
+          momentum=momentum)
 
     elif optimizer == 'adam':
-      optimizer_mentor = tf.train.AdamOptimizer(
-        learning_rate=learning_rate_mentor)
-      optimizer_mentee = tf.train.AdamOptimizer(
-        learning_rate=learning_rate_mentee)
+      with tf.variable_scope('mentor_adam_optimizer'):         
+        optimizer_mentor = tf.train.AdamOptimizer(
+          learning_rate=learning_rate_mentor)
+      with tf.variable_scope('mentee_adam_optimizer'):              
+        optimizer_mentee = tf.train.AdamOptimizer(
+          learning_rate=learning_rate_mentee)
 
     # Batch norm requires update ops to be added as a dependency to train_op
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):
+      with tf.variable_scope('optimizers'):
       train_op_mentor = optimizer_mentor.minimize(loss_mentor, 
                                     global_step_mentor, 
                                     var_list = mentor_variables)
@@ -610,19 +620,19 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
   else:
     train_op_mentor = None
     train_op_mentee = None
+  with tf.variable_scope('metrics'):
+    accuracy_mentor = tf.metrics.accuracy(
+        tf.argmax(labels, axis=1), predictions_mentor['classes'])
+    accuracy_mentee = tf.metrics.accuracy(
+        tf.argmax(labels, axis=1), predictions_mentee['classes'])      
+    metrics = {'accuracy_mentor': accuracy_mentor,
+              'accuracy_mentee': accuracy_mentee}
 
-  accuracy_mentor = tf.metrics.accuracy(
-      tf.argmax(labels, axis=1), predictions_mentor['classes'])
-  accuracy_mentee = tf.metrics.accuracy(
-      tf.argmax(labels, axis=1), predictions_mentee['classes'])      
-  metrics = {'accuracy_mentor': accuracy_mentor,
-             'accuracy_mentee': accuracy_mentee}
-
-  # Create a tensor named train_accuracy for logging purposes
-  tf.identity(accuracy_mentor[1], name='train_accuracy_mentor')
-  tf.summary.scalar('train_accuracy_mentor', accuracy_mentor[1])
-  tf.identity(accuracy_mentee[1], name='train_accuracy_mentee')
-  tf.summary.scalar('train_accuracy_mentee', accuracy_mentee[1])
+    # Create a tensor named train_accuracy for logging purposes
+    tf.identity(accuracy_mentor[1], name='train_accuracy_mentor')
+    tf.summary.scalar('train_accuracy_mentor', accuracy_mentor[1])
+    tf.identity(accuracy_mentee[1], name='train_accuracy_mentee')
+    tf.summary.scalar('train_accuracy_mentee', accuracy_mentee[1])
 
   saver=tf.train.Saver(var_list = tf.global_variables())
 
