@@ -595,7 +595,6 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
       global_step_mentee = tf.train.get_or_create_global_step()    
       learning_rate_mentor = learning_rate_fn(global_step_mentor)
       learning_rate_mentee = learning_rate_fn(global_step_mentee)
-      # Create a tensor named learning_rate for logging purposes
       tf.identity(learning_rate_mentor, name='learning_rate_mentor' )
       tf.summary.scalar('learning_rate_mentor', learning_rate_mentor)
       tf.identity(learning_rate_mentee, name='learning_rate_mentee' )
