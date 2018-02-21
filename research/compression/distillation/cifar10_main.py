@@ -214,7 +214,6 @@ if __name__ == '__main__':
                       temperature = 1.5,
                       optimizer = 'momentum',
                       weight_decay_coeff = 0.002,
-                      num_probes = 0,
                       batch_size=128)
 
   FLAGS, unparsed = parser.parse_known_args()
