@@ -170,7 +170,7 @@ def cifar10_model_fn(features, labels, mode, params):
 
   learning_rate_fn = resnet.learning_rate_with_decay(
       batch_size=params['batch_size'], batch_denom=128,
-      num_images=_NUM_IMAGES['train'], boundary_epochs=[100, 150, 200],
+      num_images=_NUM_IMAGES['train'], boundary_epochs=[50, 100, 150],
       decay_rates=[1, 0.1, 0.01, 0.001])
 
   # Empirical testing showed that including batch_normalization variables
@@ -205,13 +205,13 @@ if __name__ == '__main__':
 
   parser.set_defaults(data_dir='./cifar10_data',
                       model_dir='./cifar10_model',
-                      resnet_size_mentee=2 * 6+2,
+                      resnet_size_mentee=1 * 6+2,
                       resnet_size_mentor=10 * 6+2,
                       train_epochs=100,
                       epochs_per_eval=10,
-                      distillation_coeff = 0.01,
-                      probe_coeff = 0.1,
-                      temperature = 3,
+                      distillation_coeff = 0.99,
+                      probes_coeff = 0.5,
+                      temperature = 1.5,
                       optimizer = 'momentum',
                       weight_decay_coeff = 0.002,
                       num_probes = 0,

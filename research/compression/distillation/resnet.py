@@ -338,14 +338,14 @@ class Model(object):
     Returns:
       A logits Tensor with shape [<batch_size>, self.num_classes].
     """
-    with tf.variable_Scope('input_transforms'):
+    with tf.variable_scope('input_transforms'):
       if self.data_format == 'channels_first':
         # Convert the inputs from channels_last (NHWC) to channels_first (NCHW).
         # This provides a large performance boost on GPU. See
         # https://www.tensorflow.org/performance/performance_guide#data_formats
         inputs = tf.transpose(inputs, [0, 3, 1, 2])
     with tf.variable_scope('mentor') as scope:
-    # mentor
+      # mentor
       mentor = conv2d_fixed_padding(
           inputs=inputs, filters=self.num_filters, kernel_size=self.kernel_size,
           strides=self.conv_stride, data_format=self.data_format)
@@ -357,7 +357,7 @@ class Model(object):
             strides=self.first_pool_stride, padding='SAME',
             data_format=self.data_format)
         mentor = tf.identity(mentor, 'mentor_' + 'initial_max_pool')
-
+      mentor_probes = []
       for i, num_blocks in enumerate(self.block_sizes[0]):
         num_filters = self.num_filters * (2**i)
         mentor = block_layer(
@@ -365,6 +365,7 @@ class Model(object):
             blocks=num_blocks, strides=self.block_strides[i],
             training=training, name='mentor_' + 'block_layer{}'.format(i + 1),
             data_format=self.data_format)
+        mentor_probes.append(mentor)
 
       mentor = batch_norm_relu(mentor, training, self.data_format)
       mentor = tf.layers.average_pooling2d(
@@ -378,7 +379,7 @@ class Model(object):
       mentor = tf.identity(mentor, 'mentor_' + 'final_dense')
 
     with tf.variable_scope('mentee') as scope:
-    # mentee
+      # mentee
       mentee = conv2d_fixed_padding(
           inputs=inputs, filters=self.num_filters, kernel_size=self.kernel_size,
           strides=self.conv_stride, data_format=self.data_format)
@@ -390,7 +391,7 @@ class Model(object):
             strides=self.first_pool_stride, padding='SAME',
             data_format=self.data_format)
         mentee = tf.identity(mentee, 'mentee_' + 'initial_max_pool')
-
+      mentee_probes = []
       for i, num_blocks in enumerate(self.block_sizes[1]):
         num_filters = self.num_filters * (2**i)
         mentee = block_layer(
@@ -398,6 +399,7 @@ class Model(object):
             blocks=num_blocks, strides=self.block_strides[i],
             training=training, name='mentee_' + 'block_layer{}'.format(i + 1),
             data_format=self.data_format)
+        mentee_probes.append(mentee)
 
       mentee = batch_norm_relu(mentee, training, self.data_format)
       mentee = tf.layers.average_pooling2d(
@@ -405,12 +407,15 @@ class Model(object):
           strides=self.second_pool_stride, padding='VALID',
           data_format=self.data_format)
       mentee = tf.identity(mentee, 'mentee_' + 'final_avg_pool')
-
       mentee = tf.reshape(mentee, [-1, self.final_size])
       mentee = tf.layers.dense(inputs=mentee, units=self.num_classes)
-      mentee = tf.identity(mentee, 'mentee_' + 'final_dense')   
+      mentee = tf.identity(mentee, 'mentee_' + 'final_dense')  
 
-    return (mentor, mentee)
+    probe_cost = tf.constant(0.)
+    for mentor_feat, mentee_feat in zip(mentor_probes, mentee_probes):
+      probe_cost = tf.reduce_sum(tf.losses.mean_squared_error (
+                    mentor_feat, mentee_feat))
+    return (mentor, mentee, probe_cost)
 
 ################################################################################
 # Functions for running training/eval/validation loops for the model.
@@ -447,10 +452,19 @@ def learning_rate_with_decay(
     def learning_rate_fn(global_step):
       global_step = tf.cast(global_step, tf.int32)
       rval = tf.train.piecewise_constant(global_step, boundaries, vals)
-      tf.summary.scalar('global_lr', rval)
       return rval
   return learning_rate_fn
 
+def distillation_coeff_fn(intital_distillation, global_step):
+  
+  global_step = tf.cast(global_step, tf.int32)
+  rval = tf.train.exponential_decay (
+                            intital_distillation,
+                            global_step, 
+                            100000,
+                            0.75,
+                            staircase = False)
+  return rval
 
 def resnet_model_fn(features, labels, mode, model_class, trainee, 
                     distillation_coeff, probes_coeff, resnet_size, num_probes,
@@ -500,7 +514,7 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
     tf.summary.image('images', features, max_outputs=6)
 
   model = model_class(resnet_size, data_format)
-  logits_mentor, logits_mentee = model(features, 
+  logits_mentor, logits_mentee, probe_cost = model(features, 
                                        mode == tf.estimator.ModeKeys.TRAIN)
 
   predictions_mentor = {
@@ -522,26 +536,31 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
     elif trainee == 'mentee':
       return tf.estimator.EstimatorSpec(mode=mode, 
               predictions=predictions_mentee)
+
   with tf.variable_scope('distillery'):
     temperature_softmax_mentor = tf.nn.softmax((tf.div(logits_mentor, 
-                        temperature)), name ='softmax_temperature_tensor_mentor')
-    distillation_loss = tf.reduce_sum (tf.nn.softmax_cross_entropy_with_logits(
-                                      logits = tf.div(logits_mentee,temperature),
-                                      labels = temperature_softmax_mentor))
-                                    
+                      temperature)), name ='softmax_temperature_tensor_mentor')
+    distillation_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
+                                    logits = tf.div(logits_mentee,temperature),
+                                    labels = temperature_softmax_mentor))
+    probe_scale = probes_coeff * distillation_coeff                                   
     tf.identity(distillation_loss, name='distillation_loss')
     tf.summary.scalar('distillation_loss', distillation_loss)
     tf.summary.scalar('scaled_distillation_loss', distillation_coeff *
                         distillation_loss)
+    tf.identity(probe_cost, name='probe_cost')                        
+    tf.summary.scalar('probe_loss', probe_cost)
+    tf.summary.scalar('scaled_probe_loss', probe_scale *
+                        probe_cost)
 
-  with tf.variable_scope('mentor_cross_entropy'):
+  with tf.variable_scope('cross_entropy'):
     # Calculate loss, which includes softmax cross entropy and L2 regularization.
     cross_entropy_mentor = tf.losses.softmax_cross_entropy(
         logits=logits_mentor, onehot_labels=labels)
     # Create a tensor named cross_entropy for logging purposes.
     tf.identity(cross_entropy_mentor, name='cross_entropy_mentor')
     tf.summary.scalar('cross_entropy_mentor', cross_entropy_mentor)        
-  with tf.variable_scope('mentee_cross_entropy'):        
+
     cross_entropy_mentee = tf.losses.softmax_cross_entropy(
         logits=logits_mentee, onehot_labels=labels)
     tf.identity(cross_entropy_mentee, name='cross_entropy_mentee')
@@ -568,14 +587,7 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
             if loss_filter_fn(v.name)])          
     else:
       l2_mentor = tf.constant(0.)
-      l2_mentee = tf.constant(0.)    
-
-  with tf.variable_scope('mentor_cumulative_loss'):
-    # Add weight decay and distillation to the loss.
-    loss_mentor = cross_entropy_mentor + weight_decay_coeff * l2_mentor
-  with tf.variable_scope('mentee_cumulative_loss'): 
-    loss_mentee = cross_entropy_mentee + weight_decay_coeff * l2_mentee + \
-                  distillation_coeff * distillation_loss 
+      l2_mentee = tf.constant(0.)
 
   if mode == tf.estimator.ModeKeys.TRAIN:
     with tf.variable_scope('learning_rates'):
@@ -589,6 +601,21 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
       tf.identity(learning_rate_mentee, name='learning_rate_mentee' )
       tf.summary.scalar('learning_rate_mentee', learning_rate_mentee)
 
+    with tf.variable_scope('mentor_cumulative_loss'):
+      # Add weight decay and distillation to the loss.
+      loss_mentor = cross_entropy_mentor + weight_decay_coeff * l2_mentor
+      tf.summary.scalar('objective', loss_mentor)                                       
+      
+    with tf.variable_scope('mentee_cumulative_loss'): 
+      distillation_coeff_decayed = distillation_coeff_fn(distillation_coeff, 
+                                          global_step_mentee) 
+      tf.identity(distillation_coeff, name='distillation_coeff_decayed')
+      tf.summary.scalar('coeff',distillation_coeff_decayed)                                       
+      loss_mentee = cross_entropy_mentee + weight_decay_coeff * l2_mentee + \
+                    distillation_coeff_decayed * distillation_loss  + \
+                    probe_scale * probe_cost
+      tf.summary.scalar('objective', loss_mentee)                                       
+                    
     if optimizer == 'momentum':
       with tf.variable_scope('mentor_momentum_optimizer'):    
         optimizer_mentor = tf.train.MomentumOptimizer(
@@ -611,15 +638,22 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):
       with tf.variable_scope('optimizers'):
-      train_op_mentor = optimizer_mentor.minimize(loss_mentor, 
-                                    global_step_mentor, 
-                                    var_list = mentor_variables)
-      train_op_mentee = optimizer_mentee.minimize(loss_mentee, 
-                                    global_step_mentee, 
-                                    var_list = mentee_variables)                                    
+        train_op_mentor = optimizer_mentor.minimize(loss_mentor, 
+                                      global_step_mentor, 
+                                      var_list = mentor_variables)
+        train_op_mentee = optimizer_mentee.minimize(loss_mentee, 
+                                      global_step_mentee, 
+                                      var_list = mentee_variables)                                    
   else:
+    with tf.variable_scope('mentor_cumulative_loss'):
+      # Add weight decay and distillation to the loss.
+      loss_mentor = cross_entropy_mentor + weight_decay_coeff * l2_mentor
+    with tf.variable_scope('mentee_cumulative_loss'):                                      
+      loss_mentee = cross_entropy_mentee + weight_decay_coeff * l2_mentee
+
     train_op_mentor = None
     train_op_mentee = None
+
   with tf.variable_scope('metrics'):
     accuracy_mentor = tf.metrics.accuracy(
         tf.argmax(labels, axis=1), predictions_mentor['classes'])
@@ -679,9 +713,9 @@ def resnet_main(flags, model_function, input_function):
 
   for i in range(flags.train_epochs // flags.epochs_per_eval):
     tensors_to_log = {
-        'learning_rate': 'learning_rate_mentor',
-        'cross_entropy': 'cross_entropy_mentor' ,
-        'train_accuracy': 'train_accuracy_mentor'
+        'learning_rate': 'learning_rates/learning_rate_mentor',
+        'cross_entropy': 'cross_entropy/cross_entropy_mentor' ,
+        'train_accuracy': 'metrics/train_accuracy_mentor'
     }
 
     logging_hook = tf.train.LoggingTensorHook(
@@ -725,10 +759,11 @@ def resnet_main(flags, model_function, input_function):
 
   for i in range(flags.train_epochs // flags.epochs_per_eval):
     tensors_to_log = {
-        'learning_rate': 'learning_rate_mentee',
-        'cross_entropy': 'cross_entropy_mentee',
-        'train_accuracy': 'train_accuracy_mentee',
-        'distillation_loss': 'distillation_loss'
+        'learning_rate': 'learning_rates/learning_rate_mentee',
+        'cross_entropy': 'cross_entropy/cross_entropy_mentee',
+        'train_accuracy': 'metrics/train_accuracy_mentee',
+        'distillation_loss': 'distillery/distillation_loss',
+        'distillation_coeff':'mentee_cumulative_loss/distillation_coeff_decayed'
     }
 
     logging_hook = tf.train.LoggingTensorHook(
@@ -817,7 +852,7 @@ class ResnetArgParser(argparse.ArgumentParser):
               'child. This is only useful when performing distillaiton.')
 
     self.add_argument(
-        '--probes_coeff', type=float, default=0.01,
+        '--probes_coeff', type=float, default=0.0001,
         help='Coefficient of weight to be applied from parent to'
               'child. This is only useful when performing mentoring.')
 

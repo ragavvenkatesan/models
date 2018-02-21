@@ -90,6 +90,8 @@ ENV/
 
 # PyCharm
 .idea/
-.DS_Store
+*.DS_Store
 research/.DS_Store
 research/compression/.DS_Store
+research/compression/distillation/tensorboards/
+research/compression/distillation/cifar10_data

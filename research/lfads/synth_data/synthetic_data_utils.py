@@ -342,7 +342,4 @@ def add_alignment_projections(datasets, npcs, ntime=None, nsamples=None):
     plt.imshow(np.dot(all_data_zm_chxtc.T, W_chxp).T - all_data_pca_pxtc)
     plt.colorbar()
 
-    import pdb
-    pdb.set_trace()
-
   return datasets
