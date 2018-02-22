@@ -416,7 +416,7 @@ class Model(object):
     pdb.set_trace()
     probe_cost = tf.constant(0.)
     for mentor_feat, mentee_feat in zip(mentor_probes, mentee_probes):
-      probe_cost = probe_cost + (tf.losses.mean_squared_error (
+      probe_cost = probe_cost + tf.losses.mean_squared_error (
                                 mentor_feat, mentee_feat)
     return (mentor, mentee, probe_cost)
 
