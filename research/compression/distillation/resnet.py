@@ -533,7 +533,7 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
     if trainee == 'mentor':
       return tf.estimator.EstimatorSpec(mode=mode, 
               predictions=predictions_mentor)
-    elif trainee == 'mentee':
+    elif trainee == 'mentee' or trainee == 'finetune':
       return tf.estimator.EstimatorSpec(mode=mode, 
               predictions=predictions_mentee)
 
@@ -615,6 +615,11 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
                     probe_scale * probe_cost
       tf.summary.scalar('objective', loss_mentee)                                       
                     
+    with tf.variable_scope('mentee_finetune'):
+      loss_mentee_finetune = cross_entropy_mentee + \
+                             weight_decay_coeff * l2_mentee
+      tf.summary.scalar('objective', loss_mentee_finetune) 
+
     if optimizer == 'momentum':
       with tf.variable_scope('mentor_momentum_optimizer'):    
         optimizer_mentor = tf.train.MomentumOptimizer(
@@ -624,6 +629,10 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
         optimizer_mentee = tf.train.MomentumOptimizer(
           learning_rate=learning_rate_mentee,
           momentum=momentum)
+      with tf.variable_scope('finetune_momentum_optimizer'):              
+        optimizer_finetune = tf.train.MomentumOptimizer(
+          learning_rate=learning_rate_mentee,
+          momentum=momentum)
 
     elif optimizer == 'adam':
       with tf.variable_scope('mentor_adam_optimizer'):         
@@ -631,6 +640,9 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
           learning_rate=learning_rate_mentor)
       with tf.variable_scope('mentee_adam_optimizer'):              
         optimizer_mentee = tf.train.AdamOptimizer(
+          learning_rate=learning_rate_mentee)
+      with tf.variable_scope('finetune_adam_optimizer'):              
+        optimizer_finetune = tf.train.AdamOptimizer(
           learning_rate=learning_rate_mentee)
 
     # Batch norm requires update ops to be added as a dependency to train_op
@@ -642,16 +654,21 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
                                       var_list = mentor_variables)
         train_op_mentee = optimizer_mentee.minimize(loss_mentee, 
                                       global_step_mentee, 
-                                      var_list = mentee_variables)                                    
+                                      var_list = mentee_variables)  
+        train_op_finetune = optimizer_finetune.minimize(loss_mentee_finetune, 
+                                      global_step_mentee, 
+                                      var_list = mentee_variables)                                                                         
   else:
     with tf.variable_scope('mentor_cumulative_loss'):
       # Add weight decay and distillation to the loss.
       loss_mentor = cross_entropy_mentor + weight_decay_coeff * l2_mentor
     with tf.variable_scope('mentee_cumulative_loss'):                                      
       loss_mentee = cross_entropy_mentee + weight_decay_coeff * l2_mentee
-
+    with tf.variabel_scope('mentee_finetune'):
+      loss_finetune = cross_entropy_mentee + weight_decay_coeff * l2_mentee
     train_op_mentor = None
     train_op_mentee = None
+    train_op_finetune = None
 
   with tf.variable_scope('metrics'):
     accuracy_mentor = tf.metrics.accuracy(
@@ -686,6 +703,14 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
         train_op=train_op_mentee,
         scaffold=tf.train.Scaffold(saver=saver),
         eval_metric_ops=metrics)
+  elif trainee == 'finetune':
+    return tf.estimator.EstimatorSpec(
+        mode=mode,
+        predictions=predictions_mentee,
+        loss=loss_mentee_finetune,
+        train_op=train_op_finetune,
+        scaffold=tf.train.Scaffold(saver=saver),
+        eval_metric_ops=metrics)    
 
 
 def resnet_main(flags, model_function, input_function):
@@ -826,6 +851,10 @@ class ResnetArgParser(argparse.ArgumentParser):
 
     self.add_argument(
         '--train_epochs_mentee', type=int, default=100,
+        help='The number of epochs to use for training.')
+
+    self.add_argument(
+        '--finetune_epochs', type=int, default=100,
         help='The number of epochs to use for training.')
 
     self.add_argument(

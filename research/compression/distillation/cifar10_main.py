@@ -209,6 +209,7 @@ if __name__ == '__main__':
                       resnet_size_mentor=10 * 6+2,
                       train_epochs_mentor=50,
                       train_epochs_mentee=100,
+                      finetune_epochs=30,
                       epochs_per_eval=10,
                       distillation_coeff = 0.01,
                       probes_coeff = 0.01,
