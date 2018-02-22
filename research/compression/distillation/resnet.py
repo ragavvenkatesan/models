@@ -813,6 +813,51 @@ def resnet_main(flags, model_function, input_function):
     eval_results = mentee.evaluate(input_fn=input_fn_eval)
     print(eval_results)
 
+  fintune = tf.estimator.Estimator(
+      model_fn=model_function, model_dir=flags.model_dir, 
+      config=run_config,
+      params={
+          'resnet_size': [flags.resnet_size_mentor, flags.resnet_size_mentee],
+          'data_format': flags.data_format,
+          'batch_size': flags.batch_size,
+          'distillation_coeff': flags.distillation_coeff,
+          'probes_coeff': flags.probes_coeff,   
+          'optimizer': flags.optimizer,
+          'weight_decay_coeff': flags.weight_decay_coeff,          
+          'temperature': flags.temperature,
+          'num_probes': flags.num_probes,                 
+          'trainee': 'finetune'
+      })
+
+  for i in range(flags.train_epochs_finetune // flags.epochs_per_eval):
+    tensors_to_log = {
+        'learning_rate': 'learning_rates/learning_rate_mentee',
+        'cross_entropy': 'cross_entropy/cross_entropy_mentee',
+        'train_accuracy': 'metrics/train_accuracy_mentee',
+    }
+
+    logging_hook = tf.train.LoggingTensorHook(
+        tensors=tensors_to_log, every_n_iter=100)
+
+    def input_fn_train():
+      return input_function(True, flags.data_dir, flags.batch_size,
+                            flags.epochs_per_eval, flags.num_parallel_calls)
+
+    print(' *********************** ' )
+    print(' Starting a mentee finetune cycle. [' + str(i) + '/' 
+            + str(flags.train_epochs_finetune // flags.epochs_per_eval) + ']')
+    print(' *********************** ' )
+
+    mentee.train(input_fn=input_fn_train, hooks=[logging_hook])
+
+    print('Starting to evaluate.')
+    # Evaluate the model and print results
+    def input_fn_eval():
+      return input_function(False, flags.data_dir, flags.batch_size,
+                            1, flags.num_parallel_calls)
+
+    eval_results = finetune.evaluate(input_fn=input_fn_eval)
+    print(eval_results)
 
 class ResnetArgParser(argparse.ArgumentParser):
   """Arguments for configuring and running a Resnet Model.
