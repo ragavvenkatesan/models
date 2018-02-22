@@ -620,27 +620,32 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
                              weight_decay_coeff * l2_mentee
       tf.summary.scalar('objective', loss_finetune) 
 
-    if optimizer == 'momentum':
+    if optimizer[0] == 'momentum':
       with tf.variable_scope('mentor_momentum_optimizer'):    
         optimizer_mentor = tf.train.MomentumOptimizer(
           learning_rate=learning_rate_mentor,
           momentum=momentum)
+    elif optimizer[0] == 'adam':
+      with tf.variable_scope('mentor_adam_optimizer'):         
+        optimizer_mentor = tf.train.AdamOptimizer(
+          learning_rate=learning_rate_mentor)
+
+    if optimizer[1] == 'momentum':
       with tf.variable_scope('mentee_momentum_optimizer'):              
         optimizer_mentee = tf.train.MomentumOptimizer(
           learning_rate=learning_rate_mentee,
           momentum=momentum)
+    elif optimizer[1] == 'adam':
+      with tf.variable_scope('mentee_adam_optimizer'):              
+        optimizer_mentee = tf.train.AdamOptimizer(
+          learning_rate=learning_rate_mentee)
+
+    if optimizer[2] == 'momentum':
       with tf.variable_scope('finetune_momentum_optimizer'):              
         optimizer_finetune = tf.train.MomentumOptimizer(
           learning_rate=learning_rate_mentee,
           momentum=momentum)
-
-    elif optimizer == 'adam':
-      with tf.variable_scope('mentor_adam_optimizer'):         
-        optimizer_mentor = tf.train.AdamOptimizer(
-          learning_rate=learning_rate_mentor)
-      with tf.variable_scope('mentee_adam_optimizer'):              
-        optimizer_mentee = tf.train.AdamOptimizer(
-          learning_rate=learning_rate_mentee)
+    elif optimizer[2] == 'adam':
       with tf.variable_scope('finetune_adam_optimizer'):              
         optimizer_finetune = tf.train.AdamOptimizer(
           learning_rate=learning_rate_mentee)
@@ -729,7 +734,9 @@ def resnet_main(flags, model_function, input_function):
           'distillation_coeff': flags.distillation_coeff,
           'probes_coeff': flags.probes_coeff,
           'weight_decay_coeff': flags.weight_decay_coeff,
-          'optimizer': flags.mentor_optimizer,
+          'optimizers': [flags.mentor_optimizer,
+                         flags.mentee_optimizer,
+                         flags.finetune_optimizer],
           'temperature': flags.temperature,
           'num_probes': flags.num_probes,
           'trainee': 'mentor'
@@ -774,7 +781,9 @@ def resnet_main(flags, model_function, input_function):
           'batch_size': flags.batch_size,
           'distillation_coeff': flags.distillation_coeff,
           'probes_coeff': flags.probes_coeff,   
-          'optimizer': flags.mentee_optimizer,
+          'optimizers': [flags.mentor_optimizer,
+                         flags.mentee_optimizer,
+                         flags.finetune_optimizer],
           'weight_decay_coeff': flags.weight_decay_coeff,          
           'temperature': flags.temperature,
           'num_probes': flags.num_probes,                 
@@ -822,7 +831,9 @@ def resnet_main(flags, model_function, input_function):
           'batch_size': flags.batch_size,
           'distillation_coeff': flags.distillation_coeff,
           'probes_coeff': flags.probes_coeff,   
-          'optimizer': flags.finetune_optimizer,
+          'optimizers': [flags.mentor_optimizer,
+                         flags.mentee_optimizer,
+                         flags.finetune_optimizer],
           'weight_decay_coeff': flags.weight_decay_coeff,          
           'temperature': flags.temperature,
           'num_probes': flags.num_probes,                 
