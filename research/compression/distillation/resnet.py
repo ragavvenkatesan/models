@@ -616,9 +616,9 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
       tf.summary.scalar('objective', loss_mentee)                                       
                     
     with tf.variable_scope('mentee_finetune'):
-      loss_mentee_finetune = cross_entropy_mentee + \
+      loss_finetune = cross_entropy_mentee + \
                              weight_decay_coeff * l2_mentee
-      tf.summary.scalar('objective', loss_mentee_finetune) 
+      tf.summary.scalar('objective', loss_finetune) 
 
     if optimizer == 'momentum':
       with tf.variable_scope('mentor_momentum_optimizer'):    
@@ -655,7 +655,7 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
         train_op_mentee = optimizer_mentee.minimize(loss_mentee, 
                                       global_step_mentee, 
                                       var_list = mentee_variables)  
-        train_op_finetune = optimizer_finetune.minimize(loss_mentee_finetune, 
+        train_op_finetune = optimizer_finetune.minimize(loss_finetune, 
                                       global_step_mentee, 
                                       var_list = mentee_variables)                                                                         
   else:
@@ -707,7 +707,7 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
     return tf.estimator.EstimatorSpec(
         mode=mode,
         predictions=predictions_mentee,
-        loss=loss_mentee_finetune,
+        loss=loss_finetune,
         train_op=train_op_finetune,
         scaffold=tf.train.Scaffold(saver=saver),
         eval_metric_ops=metrics)    
@@ -813,7 +813,7 @@ def resnet_main(flags, model_function, input_function):
     eval_results = mentee.evaluate(input_fn=input_fn_eval)
     print(eval_results)
 
-  fintune = tf.estimator.Estimator(
+  finetune = tf.estimator.Estimator(
       model_fn=model_function, model_dir=flags.model_dir, 
       config=run_config,
       params={
@@ -848,7 +848,7 @@ def resnet_main(flags, model_function, input_function):
             + str(flags.train_epochs_finetune // flags.epochs_per_eval) + ']')
     print(' *********************** ' )
 
-    mentee.train(input_fn=input_fn_train, hooks=[logging_hook])
+    finetune.train(input_fn=input_fn_train, hooks=[logging_hook])
 
     print('Starting to evaluate.')
     # Evaluate the model and print results
