@@ -413,8 +413,8 @@ class Model(object):
 
     probe_cost = tf.constant(0.)
     for mentor_feat, mentee_feat in zip(mentor_probes, mentee_probes):
-      probe_cost = tf.reduce_sum(tf.losses.mean_squared_error (
-                    mentor_feat, mentee_feat))
+      probe_cost = probe_cost + tf.reduce_sum(tf.losses.mean_squared_error (
+                                mentor_feat, mentee_feat))
     return (mentor, mentee, probe_cost)
 
 ################################################################################
@@ -594,7 +594,7 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
       global_step_mentor = tf.train.get_or_create_global_step()
       global_step_mentee = tf.train.get_or_create_global_step()    
       learning_rate_mentor = learning_rate_fn(global_step_mentor)
-      learning_rate_mentee = learning_rate_fn(global_step_mentee)
+      learning_rate_mentee = learning_rate_fn(global_step_mentee) * 10
       tf.identity(learning_rate_mentor, name='learning_rate_mentor' )
       tf.summary.scalar('learning_rate_mentor', learning_rate_mentor)
       tf.identity(learning_rate_mentee, name='learning_rate_mentee' )
@@ -710,7 +710,7 @@ def resnet_main(flags, model_function, input_function):
           'trainee': 'mentor'
       })
 
-  for i in range(flags.train_epochs // flags.epochs_per_eval):
+  for i in range(flags.train_epochs_mentor // flags.epochs_per_eval):
     tensors_to_log = {
         'learning_rate': 'learning_rates/learning_rate_mentor',
         'cross_entropy': 'cross_entropy/cross_entropy_mentor' ,
@@ -726,7 +726,7 @@ def resnet_main(flags, model_function, input_function):
 
     print(' *********************** ' )
     print(' Starting a mentor training cycle. [' + str(i) + '/' 
-            + str(flags.train_epochs // flags.epochs_per_eval) + ']')
+            + str(flags.train_epochs_mentor // flags.epochs_per_eval) + ']')
     print(' *********************** ' )            
     
     mentor.train(input_fn=input_fn_train, hooks=[logging_hook])
@@ -756,7 +756,7 @@ def resnet_main(flags, model_function, input_function):
           'trainee': 'mentee'
       })
 
-  for i in range(flags.train_epochs // flags.epochs_per_eval):
+  for i in range(flags.train_epochs_mentee // flags.epochs_per_eval):
     tensors_to_log = {
         'learning_rate': 'learning_rates/learning_rate_mentee',
         'cross_entropy': 'cross_entropy/cross_entropy_mentee',
@@ -774,7 +774,7 @@ def resnet_main(flags, model_function, input_function):
 
     print(' *********************** ' )
     print(' Starting a mentee training cycle. [' + str(i) + '/' 
-            + str(flags.train_epochs // flags.epochs_per_eval) + ']')
+            + str(flags.train_epochs_mentee // flags.epochs_per_eval) + ']')
     print(' *********************** ' )
 
     mentee.train(input_fn=input_fn_train, hooks=[logging_hook])
@@ -821,7 +821,11 @@ class ResnetArgParser(argparse.ArgumentParser):
         help='The size of the ResNet Mentee model to use.')
 
     self.add_argument(
-        '--train_epochs', type=int, default=100,
+        '--train_epochs_mentor', type=int, default=100,
+        help='The number of epochs to use for training.')
+
+    self.add_argument(
+        '--train_epochs_mentee', type=int, default=100,
         help='The number of epochs to use for training.')
 
     self.add_argument(

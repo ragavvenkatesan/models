@@ -207,14 +207,15 @@ if __name__ == '__main__':
                       model_dir='./cifar10_model',
                       resnet_size_mentee=1 * 6+2,
                       resnet_size_mentor=10 * 6+2,
-                      train_epochs=100,
+                      train_epochs_mentor=50,
+                      train_epochs_mentee=100,
                       epochs_per_eval=10,
-                      distillation_coeff = 0.5,
-                      probes_coeff = 0.2,
-                      temperature = 1.5,
+                      distillation_coeff = 0.01,
+                      probes_coeff = 0.01,
+                      temperature = 5,
                       optimizer = 'momentum',
                       weight_decay_coeff = 0.002,
-                      batch_size=128)
+                      batch_size=500)
 
   FLAGS, unparsed = parser.parse_known_args()
   tf.app.run(argv=[sys.argv[0]] + unparsed)
