@@ -357,6 +357,7 @@ class Model(object):
             strides=self.first_pool_stride, padding='SAME',
             data_format=self.data_format)
         mentor = tf.identity(mentor, 'mentor_' + 'initial_max_pool')
+
       mentor_probes = []
       for i, num_blocks in enumerate(self.block_sizes[0]):
         num_filters = self.num_filters * (2**i)
@@ -411,10 +412,12 @@ class Model(object):
       mentee = tf.layers.dense(inputs=mentee, units=self.num_classes)
       mentee = tf.identity(mentee, 'mentee_' + 'final_dense')  
 
+    import pdb
+    pdb.set_trace()
     probe_cost = tf.constant(0.)
     for mentor_feat, mentee_feat in zip(mentor_probes, mentee_probes):
-      probe_cost = probe_cost + tf.reduce_sum(tf.losses.mean_squared_error (
-                                mentor_feat, mentee_feat))
+      probe_cost = probe_cost + (tf.losses.mean_squared_error (
+                                mentor_feat, mentee_feat)
     return (mentor, mentee, probe_cost)
 
 ################################################################################
@@ -543,15 +546,11 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
     distillation_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
                                     logits = tf.div(logits_mentee,temperature),
                                     labels = temperature_softmax_mentor))
-    probe_scale = probes_coeff * distillation_coeff                                   
+
     tf.identity(distillation_loss, name='distillation_loss')
     tf.summary.scalar('distillation_loss', distillation_loss)
     tf.summary.scalar('scaled_distillation_loss', distillation_coeff *
                         distillation_loss)
-    tf.identity(probe_cost, name='probe_cost')                        
-    tf.summary.scalar('probe_loss', probe_cost)
-    tf.summary.scalar('scaled_probe_loss', probe_scale *
-                        probe_cost)
 
   with tf.variable_scope('cross_entropy'):
     # Calculate loss, which includes softmax cross entropy and L2 regularization.
@@ -602,22 +601,27 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
 
     with tf.variable_scope('mentor_cumulative_loss'):
       # Add weight decay and distillation to the loss.
-      loss_mentor = cross_entropy_mentor + weight_decay_coeff * l2_mentor
+      loss_mentor = cross_entropy_mentor + l2_mentor
       tf.summary.scalar('objective', loss_mentor)                                       
       
     with tf.variable_scope('mentee_cumulative_loss'): 
       distillation_coeff_decayed = distillation_coeff_fn(distillation_coeff, 
                                           global_step_mentee) 
+      probe_scale = probes_coeff * distillation_coeff_decayed                                   
+      tf.identity(probe_cost, name='probe_cost')                        
+      tf.summary.scalar('probe_loss', probe_cost)
+      tf.summary.scalar('scaled_probe_loss', probe_scale *
+                              probe_cost)
       tf.identity(distillation_coeff, name='distillation_coeff_decayed')
-      tf.summary.scalar('coeff',distillation_coeff_decayed)                                       
-      loss_mentee = cross_entropy_mentee + weight_decay_coeff * l2_mentee + \
+      tf.summary.scalar('coeff',distillation_coeff_decayed)  
+
+      loss_mentee = cross_entropy_mentee + l2_mentee + \
                     distillation_coeff_decayed * distillation_loss  + \
                     probe_scale * probe_cost
       tf.summary.scalar('objective', loss_mentee)                                       
                     
     with tf.variable_scope('mentee_finetune'):
-      loss_finetune = cross_entropy_mentee + \
-                             weight_decay_coeff * l2_mentee
+      loss_finetune = cross_entropy_mentee + l2_mentee
       tf.summary.scalar('objective', loss_finetune) 
 
     if optimizer[0] == 'momentum':
@@ -734,7 +738,7 @@ def resnet_main(flags, model_function, input_function):
           'distillation_coeff': flags.distillation_coeff,
           'probes_coeff': flags.probes_coeff,
           'weight_decay_coeff': flags.weight_decay_coeff,
-          'optimizers': [flags.mentor_optimizer,
+          'optimizer': [flags.mentor_optimizer,
                          flags.mentee_optimizer,
                          flags.finetune_optimizer],
           'temperature': flags.temperature,
@@ -781,7 +785,7 @@ def resnet_main(flags, model_function, input_function):
           'batch_size': flags.batch_size,
           'distillation_coeff': flags.distillation_coeff,
           'probes_coeff': flags.probes_coeff,   
-          'optimizers': [flags.mentor_optimizer,
+          'optimizer': [flags.mentor_optimizer,
                          flags.mentee_optimizer,
                          flags.finetune_optimizer],
           'weight_decay_coeff': flags.weight_decay_coeff,          
@@ -831,9 +835,9 @@ def resnet_main(flags, model_function, input_function):
           'batch_size': flags.batch_size,
           'distillation_coeff': flags.distillation_coeff,
           'probes_coeff': flags.probes_coeff,   
-          'optimizers': [flags.mentor_optimizer,
-                         flags.mentee_optimizer,
-                         flags.finetune_optimizer],
+          'optimizer': [flags.mentor_optimizer,
+                        flags.mentee_optimizer,
+                        flags.finetune_optimizer],
           'weight_decay_coeff': flags.weight_decay_coeff,          
           'temperature': flags.temperature,
           'num_probes': flags.num_probes,                 
