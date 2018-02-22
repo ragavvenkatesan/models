@@ -213,8 +213,10 @@ if __name__ == '__main__':
                       epochs_per_eval=10,
                       distillation_coeff = 0.01,
                       probes_coeff = 0.01,
-                      temperature = 5,
-                      optimizer = 'momentum',
+                      temperature = 1.5,
+                      mentee_optimizer = 'momentum',
+                      mentor_optimizer = 'adam',
+                      finetune_optimizer = 'adam',
                       weight_decay_coeff = 0.002,
                       batch_size=500)
 

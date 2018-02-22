@@ -462,7 +462,7 @@ def distillation_coeff_fn(intital_distillation, global_step):
                             intital_distillation,
                             global_step, 
                             100000,
-                            0.75,
+                            0.65,
                             staircase = False)
   return rval
 
@@ -594,7 +594,7 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
       global_step_mentor = tf.train.get_or_create_global_step()
       global_step_mentee = tf.train.get_or_create_global_step()    
       learning_rate_mentor = learning_rate_fn(global_step_mentor)
-      learning_rate_mentee = learning_rate_fn(global_step_mentee) * 10
+      learning_rate_mentee = learning_rate_fn(global_step_mentee) * 100
       tf.identity(learning_rate_mentor, name='learning_rate_mentor' )
       tf.summary.scalar('learning_rate_mentor', learning_rate_mentor)
       tf.identity(learning_rate_mentee, name='learning_rate_mentee' )
@@ -716,7 +716,7 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
 def resnet_main(flags, model_function, input_function):
   # Using the Winograd non-fused algorithms provides a small performance boost.
   os.environ['TF_ENABLE_WINOGRAD_NONFUSED'] = '1'
-  
+
   # Set up a RunConfig to only save checkpoints once per training cycle.
   run_config = tf.estimator.RunConfig().replace(save_checkpoints_secs=1e9)
   mentor = tf.estimator.Estimator(
@@ -729,7 +729,7 @@ def resnet_main(flags, model_function, input_function):
           'distillation_coeff': flags.distillation_coeff,
           'probes_coeff': flags.probes_coeff,
           'weight_decay_coeff': flags.weight_decay_coeff,
-          'optimizer': flags.optimizer,
+          'optimizer': flags.mentor_optimizer,
           'temperature': flags.temperature,
           'num_probes': flags.num_probes,
           'trainee': 'mentor'
@@ -774,7 +774,7 @@ def resnet_main(flags, model_function, input_function):
           'batch_size': flags.batch_size,
           'distillation_coeff': flags.distillation_coeff,
           'probes_coeff': flags.probes_coeff,   
-          'optimizer': flags.optimizer,
+          'optimizer': flags.mentee_optimizer,
           'weight_decay_coeff': flags.weight_decay_coeff,          
           'temperature': flags.temperature,
           'num_probes': flags.num_probes,                 
@@ -822,7 +822,7 @@ def resnet_main(flags, model_function, input_function):
           'batch_size': flags.batch_size,
           'distillation_coeff': flags.distillation_coeff,
           'probes_coeff': flags.probes_coeff,   
-          'optimizer': flags.optimizer,
+          'optimizer': flags.finetune_optimizer,
           'weight_decay_coeff': flags.weight_decay_coeff,          
           'temperature': flags.temperature,
           'num_probes': flags.num_probes,                 
@@ -911,8 +911,16 @@ class ResnetArgParser(argparse.ArgumentParser):
         help='Batch size for training and evaluation.')
 
     self.add_argument(
-        '--optimizer', type=str, default='momentum',
-        help='Batch size for training and evaluation.')
+        '--mentor_optimizer', type=str, default='momentum',
+        help='Optimizer for training and evaluation.')
+
+    self.add_argument(
+        '--mentee_optimizer', type=str, default='momentum',
+        help='Optimizer for training and evaluation.')
+
+    self.add_argument(
+        '--finetune_optimizer', type=str, default='momentum',
+        help='Optimizer for training and evaluation.')
 
     self.add_argument(
         '--data_format', type=str, default=None,
