@@ -412,8 +412,6 @@ class Model(object):
       mentee = tf.layers.dense(inputs=mentee, units=self.num_classes)
       mentee = tf.identity(mentee, 'mentee_' + 'final_dense')  
 
-    import pdb
-    pdb.set_trace()
     probe_cost = tf.constant(0.)
     for mentor_feat, mentee_feat in zip(mentor_probes, mentee_probes):
       probe_cost = probe_cost + tf.losses.mean_squared_error (
