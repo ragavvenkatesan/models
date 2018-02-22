@@ -31,7 +31,7 @@ _NUM_CHANNELS = 3
 _DEFAULT_IMAGE_BYTES = _HEIGHT * _WIDTH * _NUM_CHANNELS
 # The record is the image plus a one-byte label
 _RECORD_BYTES = _DEFAULT_IMAGE_BYTES + 1
-_NUM_CLASSES = 10
+_NUM_CLASSES = 100
 _NUM_DATA_FILES = 5
 
 _NUM_IMAGES = {
@@ -64,14 +64,15 @@ def parse_record(raw_record, is_training):
   # Convert bytes to a vector of uint8 that is record_bytes long.
   record_vector = tf.decode_raw(raw_record, tf.uint8)
 
-  # The first byte represents the label, which we convert from uint8 to int32
+  # The second byte represents the label, which we convert from uint8 to int32
   # and then to one-hot.
-  label = tf.cast(record_vector[0], tf.int32)
+  label = tf.cast(record_vector[1], tf.int32)
   label = tf.one_hot(label, _NUM_CLASSES)
+
 
   # The remaining bytes after the label represent the image, which we reshape
   # from [depth * height * width] to [depth, height, width].
-  depth_major = tf.reshape(record_vector[1:_RECORD_BYTES],
+  depth_major = tf.reshape(record_vector[2:_RECORD_BYTES],
                            [_NUM_CHANNELS, _HEIGHT, _WIDTH])
 
   # Convert from [depth, height, width] to [height, width, depth], and cast as
@@ -207,10 +208,10 @@ if __name__ == '__main__':
                       model_dir='./cifar10_model',
                       resnet_size_mentee=1 * 6+2,
                       resnet_size_mentor=10 * 6+2,
-                      train_epochs_mentor=50,
-                      train_epochs_mentee=50,
-                      finetune_epochs=50,
-                      epochs_per_eval=10,
+                      train_epochs_mentor=1,
+                      train_epochs_mentee=1,
+                      finetune_epochs=1,
+                      epochs_per_eval=1,
                       distillation_coeff = 0.01,
                       probes_coeff = 0.01,
                       temperature = 5,

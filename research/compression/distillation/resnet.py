@@ -664,7 +664,7 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
       loss_mentor = cross_entropy_mentor + weight_decay_coeff * l2_mentor
     with tf.variable_scope('mentee_cumulative_loss'):                                      
       loss_mentee = cross_entropy_mentee + weight_decay_coeff * l2_mentee
-    with tf.variabel_scope('mentee_finetune'):
+    with tf.variable_scope('mentee_finetune'):
       loss_finetune = cross_entropy_mentee + weight_decay_coeff * l2_mentee
     train_op_mentor = None
     train_op_mentee = None
@@ -899,7 +899,7 @@ class ResnetArgParser(argparse.ArgumentParser):
         help='The number of epochs to use for training.')
 
     self.add_argument(
-        '--finetune_epochs', type=int, default=100,
+        '--train_epochs_finetune', type=int, default=100,
         help='The number of epochs to use for training.')
 
     self.add_argument(
