@@ -64,11 +64,10 @@ def parse_record(raw_record, is_training):
   # Convert bytes to a vector of uint8 that is record_bytes long.
   record_vector = tf.decode_raw(raw_record, tf.uint8)
 
-  # The second byte represents the label, which we convert from uint8 to int32
+  # The first byte represents the label, which we convert from uint8 to int32
   # and then to one-hot.
   label = tf.cast(record_vector[1], tf.int32)
   label = tf.one_hot(label, _NUM_CLASSES)
-
 
   # The remaining bytes after the label represent the image, which we reshape
   # from [depth * height * width] to [depth, height, width].
@@ -208,14 +207,16 @@ if __name__ == '__main__':
                       model_dir='./cifar10_model',
                       resnet_size_mentee=1 * 6+2,
                       resnet_size_mentor=10 * 6+2,
-                      train_epochs_mentor=1,
-                      train_epochs_mentee=1,
-                      finetune_epochs=1,
-                      epochs_per_eval=1,
-                      distillation_coeff = 0.01,
-                      probes_coeff = 0.01,
-                      temperature = 5,
-                      optimizer = 'momentum',
+                      train_epochs_mentor=10,
+                      train_epochs_mentee=10,
+                      finetune_epochs=10,
+                      epochs_per_eval=10,
+                      distillation_coeff = 0.1,
+                      probes_coeff = 0.001,
+                      temperature = 1.5,
+                      mentee_optimizer = 'momentum',
+                      mentor_optimizer = 'adam',
+                      finetune_optimizer = 'adam',
                       weight_decay_coeff = 0.002,
                       batch_size=500)
 

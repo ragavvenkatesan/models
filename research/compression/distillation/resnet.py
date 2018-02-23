@@ -645,7 +645,7 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
     if optimizer[2] == 'momentum':
       with tf.variable_scope('finetune_momentum_optimizer'):              
         optimizer_finetune = tf.train.MomentumOptimizer(
-          learning_rate=learning_rate_mentee,
+          learning_rate=learning_rate_mentee * 0.1,
           momentum=momentum)
     elif optimizer[2] == 'adam':
       with tf.variable_scope('finetune_adam_optimizer'):              
