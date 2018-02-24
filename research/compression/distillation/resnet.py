@@ -278,13 +278,15 @@ class Model(object):
 
   def __init__(self, resnet_size, num_classes, num_filters, kernel_size,
                conv_stride, first_pool_size, first_pool_stride, probe_pool_size,
-               second_pool_size, second_pool_stride, block_fn, block_sizes,
+               second_pool_size, second_pool_stride, probe_pool_stride,
+               block_fn, block_sizes,
                block_strides, final_size, data_format=None):
     """Creates a model for classifying an image.
 
     Args:
       resnet_size: A single integer for the size of the ResNet model.
       probe_pool_size: Number to pool the probes by.
+      probe_pool_stride: stride size for the probe pooling layer      
       num_classes: The number of classes used as labels.
       num_filters: The number of filters to use for the first block layer
         of the model. This number is then doubled for each subsequent block
@@ -411,7 +413,7 @@ class Model(object):
             blocks=num_blocks, strides=self.block_strides[i],
             training=training, name='mentee_' + 'block_layer{}'.format(i + 1),
             data_format=self.data_format)
-        if pool_probes > 0:
+        if self.probe_pool_size > 0:
           mentee_probe = tf.layers.max_pooling2d(
               inputs=mentee, pool_size=self.probe_pool_size,
               strides=self.probe_pool_stride, padding='SAME',
@@ -429,8 +431,8 @@ class Model(object):
       mentee = tf.reshape(mentee, [-1, self.final_size])
       mentee = tf.layers.dense(inputs=mentee, units=self.num_classes)
       mentee = tf.identity(mentee, 'mentee_' + 'final_dense')  
-      mentee_probees.append(mentee_probes)
-      
+      mentee_probes.append(mentee)
+
     probe_cost = tf.constant(0.)
     for mentor_feat, mentee_feat in zip(mentor_probes, mentee_probes):
       probe_cost = probe_cost + tf.losses.mean_squared_error (
@@ -476,7 +478,7 @@ def learning_rate_with_decay(
       return rval
   return learning_rate_fn
 
-def learning_rate_with_decay_2( intiial_learning_rate,
+def learning_rate_with_decay_2( initial_learning_rate,
     batch_size, batch_denom, num_images, boundary_epochs, decay_rates):
   """Get a learning rate that decays step-wise as training progresses.
 
@@ -659,7 +661,7 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
       tf.identity(learning_rate_mentee, name='learning_rate_mentee' )
       tf.summary.scalar('learning_rate_mentee', learning_rate_mentee)
       tf.identity(learning_rate_finetune, name='learning_rate_finetune' )
-      tf.summary.scalar('learning_rate_finetune', learning_rate_fintune)
+      tf.summary.scalar('learning_rate_finetune', learning_rate_finetune)
 
     with tf.variable_scope('mentor_cumulative_loss'):
       # Add weight decay and distillation to the loss.
@@ -819,6 +821,12 @@ def resnet_main(flags, model_function, input_function):
           'temperature': flags.temperature,         
           'num_probes': flags.num_probes,
           'pool_probes': flags.pool_probes,
+          'train_epochs_mentor': flags.train_epochs_mentor,
+          'train_epochs_mentee': flags.train_epochs_mentee,
+          'train_epochs_finetune': flags.train_epochs_finetune,
+          'initial_learning_rate_mentor': flags.initial_learning_rate_mentor,
+          'initial_learning_rate_mentee': flags.initial_learning_rate_mentee,
+        'initial_learning_rate_finetune': flags.initial_learning_rate_finetune,          
           'trainee': 'mentor'
       })
 
@@ -867,7 +875,13 @@ def resnet_main(flags, model_function, input_function):
           'weight_decay_coeff': flags.weight_decay_coeff,          
           'temperature': flags.temperature,
           'num_probes': flags.num_probes, 
-          'pool_probes': flags.pool_probes,                          
+          'pool_probes': flags.pool_probes, 
+          'train_epochs_mentor': flags.train_epochs_mentor,
+          'train_epochs_mentee': flags.train_epochs_mentee,
+          'train_epochs_finetune': flags.train_epochs_finetune,
+          'initial_learning_rate_mentor': flags.initial_learning_rate_mentor,
+          'initial_learning_rate_mentee': flags.initial_learning_rate_mentee,
+        'initial_learning_rate_finetune': flags.initial_learning_rate_finetune,                                                  
           'trainee': 'mentee'
       })
 
@@ -918,7 +932,13 @@ def resnet_main(flags, model_function, input_function):
           'weight_decay_coeff': flags.weight_decay_coeff,          
           'temperature': flags.temperature,
           'num_probes': flags.num_probes,   
-          'pool_probes': flags.pool_probes,            
+          'pool_probes': flags.pool_probes,
+          'train_epochs_mentor': flags.train_epochs_mentor,
+          'train_epochs_mentee': flags.train_epochs_mentee,
+          'train_epochs_finetune': flags.train_epochs_finetune,
+          'initial_learning_rate_mentor': flags.initial_learning_rate_mentor,
+          'initial_learning_rate_mentee': flags.initial_learning_rate_mentee,
+        'initial_learning_rate_finetune': flags.initial_learning_rate_finetune,                                   
           'trainee': 'finetune'
       })
 

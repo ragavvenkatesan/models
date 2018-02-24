@@ -181,24 +181,24 @@ def cifar10_model_fn(features, labels, mode, params):
       initial_learning_rate = params['initial_learning_rate_mentor'],
       decay_rates=[1, 0.1, 0.01, 0.001])
 
-  epochs_2 = params['train_epochs_mentor']
+  epochs_2 = params['train_epochs_mentee']
   learning_rate_fn_mentee = resnet.learning_rate_with_decay_2(
       batch_size=params['batch_size'], batch_denom=128,
       num_images=_NUM_IMAGES['train'], 
       boundary_epochs=[ epochs_1 + epochs_2//4,
                        epochs_1 + epochs_2//2,
                        epochs_1 + 3 * epochs_2//4],
-      initial_learning_rate = params['initial_learning_rate_mentor'],
+      initial_learning_rate = params['initial_learning_rate_mentee'],
       decay_rates=[1, 0.1, 0.01, 0.001])
-
-  epochs_3 = params['train_epochs_mentor']
+  
+  epochs_3 = params['train_epochs_finetune']
   learning_rate_fn_finetune = resnet.learning_rate_with_decay_2(
       batch_size=params['batch_size'], batch_denom=128,
       num_images=_NUM_IMAGES['train'], 
       boundary_epochs=[epochs_1 + epochs_2 + epochs_3 //4,
                        epochs_1 + epochs_2 + epochs_3//2,
                        epochs_1 + epochs_2 + 3*epochs_3//4],
-      initial_learning_rate = params['initial_learning_rate_mentor'],
+      initial_learning_rate = params['initial_learning_rate_finetune'],
       decay_rates=[1, 0.1, 0.01, 0.001])
 
   # Empirical testing showed that including batch_normalization variables
@@ -240,8 +240,8 @@ if __name__ == '__main__':
                       resnet_size_mentor=10 * 6+2,
                       train_epochs_mentor=1,
                       train_epochs_mentee=1,
-                      finetune_epochs=1,
-                      epochs_per_eval=10,
+                      train_epochs_finetune=1,
+                      epochs_per_eval=1,
                       distillation_coeff=0.1,
                       probes_coeff=0.01,
                       temperature=1.5,
@@ -249,8 +249,8 @@ if __name__ == '__main__':
                       mentor_optimizer='adadelta',
                       finetune_optimizer='adadelta',
                       initial_learning_rate_mentor = 0.001,
-                      intial_learning_rate_mentee = 0.001,
-                      intiial_learning_rate_finetune = 0.001,
+                      initial_learning_rate_mentee = 0.001,
+                      initial_learning_rate_finetune = 0.001,
                       pool_probes = 2,
                       weight_decay_coeff=0.000002,
                       batch_size=500)
