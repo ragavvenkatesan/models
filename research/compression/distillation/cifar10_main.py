@@ -129,7 +129,7 @@ def input_fn(is_training, data_dir, batch_size, num_epochs=1,
 ###############################################################################
 class Cifar10Model(resnet.Model):
 
-  def __init__(self, resnet_size, data_format=None, 
+  def __init__(self, resnet_size, pool_probes, data_format=None, 
                num_classes=_NUM_CLASSES):
     """These are the parameters that work for CIFAR-10 data.
 
@@ -137,6 +137,7 @@ class Cifar10Model(resnet.Model):
       resnet_size: The number of convolutional layers needed in the model.
       data_format: Either 'channels_first' or 'channels_last', specifying which
         data format to use when setting up the model.
+      pool_probes: Number to pool probes by.
       num_classes: The number of output classes needed from the model. This
         enables users to extend the same model to their own datasets.
     """
@@ -158,6 +159,8 @@ class Cifar10Model(resnet.Model):
         first_pool_stride=None,
         second_pool_size=8,
         second_pool_stride=1,
+        probe_pool_stride=1,
+        probe_pool_size = pool_probes,
         block_fn=resnet.building_block,
         block_sizes=[ [num_blocks[0]] * 3, [num_blocks[1]] * 3 ],
         block_strides=[1, 2, 2],
@@ -168,9 +171,34 @@ def cifar10_model_fn(features, labels, mode, params):
   """Model function for CIFAR-10."""
   features = tf.reshape(features, [-1, _HEIGHT, _WIDTH, _NUM_CHANNELS])
 
-  learning_rate_fn = resnet.learning_rate_with_decay(
+  epochs_1 = params ['train_epochs_mentor']
+  learning_rate_fn_mentor = resnet.learning_rate_with_decay_2(
       batch_size=params['batch_size'], batch_denom=128,
-      num_images=_NUM_IMAGES['train'], boundary_epochs=[50, 100, 150],
+      num_images=_NUM_IMAGES['train'], 
+      boundary_epochs=[epochs_1 //4,
+                       epochs_1 //2,
+                       3 * epochs_1 //4],
+      initial_learning_rate = params['initial_learning_rate_mentor'],
+      decay_rates=[1, 0.1, 0.01, 0.001])
+
+  epochs_2 = params['train_epochs_mentor']
+  learning_rate_fn_mentee = resnet.learning_rate_with_decay_2(
+      batch_size=params['batch_size'], batch_denom=128,
+      num_images=_NUM_IMAGES['train'], 
+      boundary_epochs=[ epochs_1 + epochs_2//4,
+                       epochs_1 + epochs_2//2,
+                       epochs_1 + 3 * epochs_2//4],
+      initial_learning_rate = params['initial_learning_rate_mentor'],
+      decay_rates=[1, 0.1, 0.01, 0.001])
+
+  epochs_3 = params['train_epochs_mentor']
+  learning_rate_fn_finetune = resnet.learning_rate_with_decay_2(
+      batch_size=params['batch_size'], batch_denom=128,
+      num_images=_NUM_IMAGES['train'], 
+      boundary_epochs=[epochs_1 + epochs_2 + epochs_3 //4,
+                       epochs_1 + epochs_2 + epochs_3//2,
+                       epochs_1 + epochs_2 + 3*epochs_3//4],
+      initial_learning_rate = params['initial_learning_rate_mentor'],
       decay_rates=[1, 0.1, 0.01, 0.001])
 
   # Empirical testing showed that including batch_normalization variables
@@ -182,7 +210,9 @@ def cifar10_model_fn(features, labels, mode, params):
     return True
   return resnet.resnet_model_fn(features, labels, mode, Cifar10Model,
                                 resnet_size=params['resnet_size'],
-                                learning_rate_fn=learning_rate_fn,
+                                learning_rate_fn_mentor=learning_rate_fn_mentor,
+                                learning_rate_fn_mentee=learning_rate_fn_mentee,
+                            learning_rate_fn_finetune=learning_rate_fn_finetune,                                
                                 momentum=0.9,
                                 temperature = params['temperature'],
                                 num_probes = params['num_probes'],
@@ -192,6 +222,7 @@ def cifar10_model_fn(features, labels, mode, params):
                                 optimizer = params['optimizer'],
                                 trainee=params['trainee'],
                                 data_format=params['data_format'],
+                                pool_probes=params['pool_probes'],
                                 loss_filter_fn=loss_filter_fn)
 
 def main(unused_argv):
@@ -207,17 +238,21 @@ if __name__ == '__main__':
                       model_dir='./cifar10_model',
                       resnet_size_mentee=1 * 6+2,
                       resnet_size_mentor=10 * 6+2,
-                      train_epochs_mentor=100,
-                      train_epochs_mentee=100,
-                      finetune_epochs=100,
+                      train_epochs_mentor=1,
+                      train_epochs_mentee=1,
+                      finetune_epochs=1,
                       epochs_per_eval=10,
-                      distillation_coeff = 0.01,
-                      probes_coeff = 0.001,
-                      temperature = 1.5,
-                      mentee_optimizer = 'adam',
-                      mentor_optimizer = 'momentum',
-                      finetune_optimizer = 'adam',
-                      weight_decay_coeff = 0.000,
+                      distillation_coeff=0.1,
+                      probes_coeff=0.01,
+                      temperature=1.5,
+                      mentee_optimizer='adadelta',
+                      mentor_optimizer='adadelta',
+                      finetune_optimizer='adadelta',
+                      initial_learning_rate_mentor = 0.001,
+                      intial_learning_rate_mentee = 0.001,
+                      intiial_learning_rate_finetune = 0.001,
+                      pool_probes = 2,
+                      weight_decay_coeff=0.000002,
                       batch_size=500)
 
   FLAGS, unparsed = parser.parse_known_args()

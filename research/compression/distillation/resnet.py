@@ -277,13 +277,14 @@ class Model(object):
   """
 
   def __init__(self, resnet_size, num_classes, num_filters, kernel_size,
-               conv_stride, first_pool_size, first_pool_stride,
+               conv_stride, first_pool_size, first_pool_stride, probe_pool_size,
                second_pool_size, second_pool_stride, block_fn, block_sizes,
                block_strides, final_size, data_format=None):
     """Creates a model for classifying an image.
 
     Args:
       resnet_size: A single integer for the size of the ResNet model.
+      probe_pool_size: Number to pool the probes by.
       num_classes: The number of classes used as labels.
       num_filters: The number of filters to use for the first block layer
         of the model. This number is then doubled for each subsequent block
@@ -322,6 +323,8 @@ class Model(object):
     self.first_pool_stride = first_pool_stride
     self.second_pool_size = second_pool_size
     self.second_pool_stride = second_pool_stride
+    self.probe_pool_size = probe_pool_size
+    self.probe_pool_stride = probe_pool_stride
     self.block_fn = block_fn
     self.block_sizes = block_sizes
     self.block_strides = block_strides
@@ -366,7 +369,14 @@ class Model(object):
             blocks=num_blocks, strides=self.block_strides[i],
             training=training, name='mentor_' + 'block_layer{}'.format(i + 1),
             data_format=self.data_format)
-        mentor_probes.append(mentor)
+        if self.probe_pool_size > 0:
+          mentor_probe = tf.layers.max_pooling2d(
+              inputs=mentor, pool_size=self.probe_pool_size,
+              strides=self.probe_pool_stride, padding='SAME',
+              data_format=self.data_format)
+          mentor_probe = tf.identity(mentor, 'mentor_'+'probe_max_pool_' \
+                                             + str(i))
+          mentor_probes.append(mentor_probe)
 
       mentor = batch_norm_relu(mentor, training, self.data_format)
       mentor = tf.layers.average_pooling2d(
@@ -378,6 +388,7 @@ class Model(object):
       mentor = tf.reshape(mentor, [-1, self.final_size])
       mentor = tf.layers.dense(inputs=mentor, units=self.num_classes)
       mentor = tf.identity(mentor, 'mentor_' + 'final_dense')
+      mentor_probes.append(mentor)
 
     with tf.variable_scope('mentee') as scope:
       # mentee
@@ -400,7 +411,14 @@ class Model(object):
             blocks=num_blocks, strides=self.block_strides[i],
             training=training, name='mentee_' + 'block_layer{}'.format(i + 1),
             data_format=self.data_format)
-        mentee_probes.append(mentee)
+        if pool_probes > 0:
+          mentee_probe = tf.layers.max_pooling2d(
+              inputs=mentee, pool_size=self.probe_pool_size,
+              strides=self.probe_pool_stride, padding='SAME',
+              data_format=self.data_format)
+          mentee_probe = tf.identity(mentee, 'mentee_'+'probe_max_pool_' \
+                                             + str(i))
+          mentee_probes.append(mentee_probe)
 
       mentee = batch_norm_relu(mentee, training, self.data_format)
       mentee = tf.layers.average_pooling2d(
@@ -411,7 +429,8 @@ class Model(object):
       mentee = tf.reshape(mentee, [-1, self.final_size])
       mentee = tf.layers.dense(inputs=mentee, units=self.num_classes)
       mentee = tf.identity(mentee, 'mentee_' + 'final_dense')  
-
+      mentee_probees.append(mentee_probes)
+      
     probe_cost = tf.constant(0.)
     for mentor_feat, mentee_feat in zip(mentor_probes, mentee_probes):
       probe_cost = probe_cost + tf.losses.mean_squared_error (
@@ -421,6 +440,7 @@ class Model(object):
 ################################################################################
 # Functions for running training/eval/validation loops for the model.
 ################################################################################
+
 def learning_rate_with_decay(
     batch_size, batch_denom, num_images, boundary_epochs, decay_rates):
   """Get a learning rate that decays step-wise as training progresses.
@@ -456,21 +476,57 @@ def learning_rate_with_decay(
       return rval
   return learning_rate_fn
 
+def learning_rate_with_decay_2( intiial_learning_rate,
+    batch_size, batch_denom, num_images, boundary_epochs, decay_rates):
+  """Get a learning rate that decays step-wise as training progresses.
+
+  Args:
+    batch_size: the number of examples processed in each training batch.
+    batch_denom: this value will be used to scale the base learning rate.
+      `0.1 * batch size` is divided by this number, such that when
+      batch_denom == batch_size, the initial learning rate will be 0.1.
+    num_images: total number of images that will be used for training.
+    boundary_epochs: list of ints representing the epochs at which we
+      decay the learning rate.
+    decay_rates: list of floats representing the decay rates to be used
+      for scaling the learning rate. Should be the same length as
+      boundary_epochs.
+
+  Returns:
+    Returns a function that takes a single argument - the number of batches
+    trained so far (global_step)- and returns the learning rate to be used
+    for training the next batch.
+  """
+  with tf.variable_scope('learning_rate'):
+    batches_per_epoch = num_images / batch_size
+
+    boundaries = [int(batches_per_epoch * epoch) for epoch in boundary_epochs]
+    vals = [initial_learning_rate * decay for decay in decay_rates]
+
+    def learning_rate_fn(global_step):
+      global_step = tf.cast(global_step, tf.int32)
+      rval = tf.train.piecewise_constant(global_step, boundaries, vals)
+      return rval
+  return learning_rate_fn
+
+
 def distillation_coeff_fn(intital_distillation, global_step):
-  
   global_step = tf.cast(global_step, tf.int32)
   rval = tf.train.exponential_decay (
                             intital_distillation,
                             global_step, 
                             100000,
-                            0.65,
+                            0.55,
                             staircase = False)
   return rval
 
 def resnet_model_fn(features, labels, mode, model_class, trainee, 
                     distillation_coeff, probes_coeff, resnet_size, num_probes,
-                    weight_decay_coeff, learning_rate_fn, momentum, data_format,
-                    temperature=1, optimizer='momentum', loss_filter_fn=None):
+                    weight_decay_coeff, learning_rate_fn_mentor, 
+                    learning_rate_fn_mentee, learning_rate_fn_finetune,
+                    momentum, data_format, pool_probes,
+                    temperature=1, optimizer='momentum', 
+                    loss_filter_fn=None):
   """Shared functionality for different resnet model_fns.
 
   Initializes the ResnetModel representing the model layers
@@ -493,8 +549,12 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
     weight_decay_coeff: weight decay rate used to regularize learned variables.
     distillation_coeff: Weight for distillation.
     probes_coeff: weight for probes.
-    learning_rate_fn: function that returns the current learning rate given
+    learning_rate_fn_mentor: function that returns the current learning rate given
       the current global_step
+    learning_rate_fn_mentee: function that returns the current learning rate given
+      the current global_step
+    learning_rate_fn_finetune: function that returns the current learning rate given
+      the current global_step            
     num_probes: How many equally spaced probes do we need. 
     momentum: momentum term used for optimization.
     data_format: Input format ('channels_last', 'channels_first', or None).
@@ -505,7 +565,8 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
       True if the var should be included in loss calculation, and False
       otherwise. If None, batch_normalization variables will be excluded
       from the loss.
-    optimizer: 'adam' and 'momentum' are options.
+    pool_probes: Downsampling for probes.
+    optimizer: 'adam', 'adadelta' and 'momentum' are options.
   Returns:
     EstimatorSpec parameterized according to the input params and the
     current mode.
@@ -514,7 +575,7 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
     # Generate a summary node for the images
     tf.summary.image('images', features, max_outputs=6)
 
-  model = model_class(resnet_size, data_format)
+  model = model_class(resnet_size, pool_probes, data_format)
   logits_mentor, logits_mentee, probe_cost = model(features, 
                                        mode == tf.estimator.ModeKeys.TRAIN)
 
@@ -588,14 +649,17 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
 
   if mode == tf.estimator.ModeKeys.TRAIN:
     with tf.variable_scope('learning_rates'):
-      global_step_mentor = tf.train.get_or_create_global_step()
-      global_step_mentee = tf.train.get_or_create_global_step()    
-      learning_rate_mentor = learning_rate_fn(global_step_mentor)
-      learning_rate_mentee = learning_rate_fn(global_step_mentee) * 100
+      global_step = tf.train.get_or_create_global_step()
+      learning_rate_mentor = learning_rate_fn_mentor(global_step)
+      learning_rate_mentee = learning_rate_fn_mentee(global_step)
+      learning_rate_finetune = learning_rate_fn_finetune(global_step)  
+
       tf.identity(learning_rate_mentor, name='learning_rate_mentor' )
       tf.summary.scalar('learning_rate_mentor', learning_rate_mentor)
       tf.identity(learning_rate_mentee, name='learning_rate_mentee' )
       tf.summary.scalar('learning_rate_mentee', learning_rate_mentee)
+      tf.identity(learning_rate_finetune, name='learning_rate_finetune' )
+      tf.summary.scalar('learning_rate_finetune', learning_rate_fintune)
 
     with tf.variable_scope('mentor_cumulative_loss'):
       # Add weight decay and distillation to the loss.
@@ -604,8 +668,9 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
       
     with tf.variable_scope('mentee_cumulative_loss'): 
       distillation_coeff_decayed = distillation_coeff_fn(distillation_coeff, 
-                                          global_step_mentee) 
-      probe_scale = probes_coeff * distillation_coeff_decayed                                   
+                                          global_step) 
+      probe_scale = probes_coeff * distillation_coeff_decayed 
+
       tf.identity(probe_cost, name='probe_cost')                        
       tf.summary.scalar('probe_loss', probe_cost)
       tf.summary.scalar('scaled_probe_loss', probe_scale *
@@ -631,6 +696,10 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
       with tf.variable_scope('mentor_adam_optimizer'):         
         optimizer_mentor = tf.train.AdamOptimizer(
           learning_rate=learning_rate_mentor)
+    elif optimizer[0] == 'adadelta':
+      with tf.variable_scope('mentor_adadelta_optimizer'):         
+        optimizer_mentor = tf.train.AdadeltaOptimizer(
+          learning_rate=learning_rate_mentor)
 
     if optimizer[1] == 'momentum':
       with tf.variable_scope('mentee_momentum_optimizer'):              
@@ -641,29 +710,37 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
       with tf.variable_scope('mentee_adam_optimizer'):              
         optimizer_mentee = tf.train.AdamOptimizer(
           learning_rate=learning_rate_mentee)
+    elif optimizer[1] == 'adadelta':
+      with tf.variable_scope('mentee_adadelta_optimizer'):              
+        optimizer_mentee = tf.train.AdadeltaOptimizer(
+          learning_rate=learning_rate_mentee)
 
     if optimizer[2] == 'momentum':
       with tf.variable_scope('finetune_momentum_optimizer'):              
         optimizer_finetune = tf.train.MomentumOptimizer(
-          learning_rate=learning_rate_mentee * 0.1,
+          learning_rate=learning_rate_finetune,
           momentum=momentum)
     elif optimizer[2] == 'adam':
       with tf.variable_scope('finetune_adam_optimizer'):              
         optimizer_finetune = tf.train.AdamOptimizer(
-          learning_rate=learning_rate_mentee)
+          learning_rate=learning_rate_finetune)
+    elif optimizer[2] == 'adadelta':
+      with tf.variable_scope('finetune_adadelta_optimizer'):              
+        optimizer_finetune = tf.train.AdadeltaOptimizer(
+          learning_rate=learning_rate_finetune)
 
     # Batch norm requires update ops to be added as a dependency to train_op
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):
       with tf.variable_scope('optimizers'):
         train_op_mentor = optimizer_mentor.minimize(loss_mentor, 
-                                      global_step_mentor, 
+                                      global_step, 
                                       var_list = mentor_variables)
         train_op_mentee = optimizer_mentee.minimize(loss_mentee, 
-                                      global_step_mentee, 
+                                      global_step, 
                                       var_list = mentee_variables)  
         train_op_finetune = optimizer_finetune.minimize(loss_finetune, 
-                                      global_step_mentee, 
+                                      global_step, 
                                       var_list = mentee_variables)                                                                         
   else:
     with tf.variable_scope('mentor_cumulative_loss'):
@@ -739,8 +816,9 @@ def resnet_main(flags, model_function, input_function):
           'optimizer': [flags.mentor_optimizer,
                          flags.mentee_optimizer,
                          flags.finetune_optimizer],
-          'temperature': flags.temperature,
+          'temperature': flags.temperature,         
           'num_probes': flags.num_probes,
+          'pool_probes': flags.pool_probes,
           'trainee': 'mentor'
       })
 
@@ -788,7 +866,8 @@ def resnet_main(flags, model_function, input_function):
                          flags.finetune_optimizer],
           'weight_decay_coeff': flags.weight_decay_coeff,          
           'temperature': flags.temperature,
-          'num_probes': flags.num_probes,                 
+          'num_probes': flags.num_probes, 
+          'pool_probes': flags.pool_probes,                          
           'trainee': 'mentee'
       })
 
@@ -838,7 +917,8 @@ def resnet_main(flags, model_function, input_function):
                         flags.finetune_optimizer],
           'weight_decay_coeff': flags.weight_decay_coeff,          
           'temperature': flags.temperature,
-          'num_probes': flags.num_probes,                 
+          'num_probes': flags.num_probes,   
+          'pool_probes': flags.pool_probes,            
           'trainee': 'finetune'
       })
 
@@ -966,3 +1046,19 @@ class ResnetArgParser(argparse.ArgumentParser):
     self.add_argument(
         '--num_probes', type=int, default=0,
         help='Number of probes to be used')
+
+    self.add_argument(
+        '--pool_probes', type=int, default=2,
+        help='Maxpool probes by')
+
+    self.add_argument(
+        '--initial_learning_rate_mentor', type=float, default=0.001,
+        help='Set initial learning rate for mentor')        
+
+    self.add_argument(
+        '--initial_learning_rate_mentee', type=float, default=0.001,
+        help='Set initial learning rate for mentee') 
+
+    self.add_argument(
+        '--initial_learning_rate_finetune', type=float, default=0.001,
+        help='Set initial learning rate finetune')                 
