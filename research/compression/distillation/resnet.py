@@ -279,7 +279,7 @@ class Model(object):
   def __init__(self, resnet_size, num_classes, num_filters, kernel_size,
                conv_stride, first_pool_size, first_pool_stride, probe_pool_size,
                second_pool_size, second_pool_stride, probe_pool_stride,
-               block_fn, block_sizes,
+               block_fn, block_sizes, pool_type,
                block_strides, final_size, data_format=None):
     """Creates a model for classifying an image.
 
@@ -304,6 +304,7 @@ class Model(object):
       block_sizes: A list containing n values, where n is the number of sets of
         block layers desired. Each value should be the number of blocks in the
         i-th set.
+      pool_type: 'max' or 'mean'.
       block_strides: List of integers representing the desired stride size for
         each of the sets of block layers. Should be same length as block_sizes.
       final_size: The expected size of the model after the second pooling.
@@ -331,6 +332,7 @@ class Model(object):
     self.block_sizes = block_sizes
     self.block_strides = block_strides
     self.final_size = final_size
+    self.pool_type = pool_type
 
   def __call__(self, inputs, training):
     """Add operations to classify a batch of input images.
@@ -372,12 +374,20 @@ class Model(object):
             training=training, name='mentor_' + 'block_layer{}'.format(i + 1),
             data_format=self.data_format)
         if self.probe_pool_size > 0:
-          mentor_probe = tf.layers.max_pooling2d(
-              inputs=mentor, pool_size=self.probe_pool_size,
-              strides=self.probe_pool_stride, padding='SAME',
-              data_format=self.data_format)
-          mentor_probe = tf.identity(mentor, 'mentor_'+'probe_max_pool_' \
-                                             + str(i))
+          if self.pool_type == 'max':
+            mentor_probe = tf.layers.max_pooling2d(
+                inputs=mentor, pool_size=self.probe_pool_size,
+                strides=self.probe_pool_stride, padding='SAME',
+                data_format=self.data_format)
+            mentor_probe = tf.identity(mentor, 'mentor_'+'probe_max_pool_' \
+                                              + str(i))
+          elif self.pool_type == 'mean':
+            mentor_probe = tf.layers.average_pooling2d(
+                inputs=mentor, pool_size=self.probe_pool_size,
+                strides=self.probe_pool_stride, padding='SAME',
+                data_format=self.data_format)
+            mentor_probe = tf.identity(mentor, 'mentor_'+'probe_mean_pool_' \
+                                              + str(i))            
           mentor_probes.append(mentor_probe)
 
       mentor = batch_norm_relu(mentor, training, self.data_format)
@@ -405,6 +415,7 @@ class Model(object):
             strides=self.first_pool_stride, padding='SAME',
             data_format=self.data_format)
         mentee = tf.identity(mentee, 'mentee_' + 'initial_max_pool')
+
       mentee_probes = []
       for i, num_blocks in enumerate(self.block_sizes[1]):
         num_filters = self.num_filters * (2**i)
@@ -413,13 +424,22 @@ class Model(object):
             blocks=num_blocks, strides=self.block_strides[i],
             training=training, name='mentee_' + 'block_layer{}'.format(i + 1),
             data_format=self.data_format)
+
         if self.probe_pool_size > 0:
-          mentee_probe = tf.layers.max_pooling2d(
-              inputs=mentee, pool_size=self.probe_pool_size,
-              strides=self.probe_pool_stride, padding='SAME',
-              data_format=self.data_format)
-          mentee_probe = tf.identity(mentee, 'mentee_'+'probe_max_pool_' \
-                                             + str(i))
+          if self.pool_type == 'max':
+            mentee_probe = tf.layers.max_pooling2d(
+                inputs=mentee, pool_size=self.probe_pool_size,
+                strides=self.probe_pool_stride, padding='SAME',
+                data_format=self.data_format)
+            mentee_probe = tf.identity(mentee, 'mentee_'+'probe_max_pool_' \
+                                              + str(i))
+          if self.pool_type == 'mean':
+            mentee_probe = tf.layers.average_pooling2d(
+                inputs=mentee, pool_size=self.probe_pool_size,
+                strides=self.probe_pool_stride, padding='SAME',
+                data_format=self.data_format)
+            mentee_probe = tf.identity(mentee, 'mentee_'+'probe_max_pool_' \
+                                              + str(i))                                              
           mentee_probes.append(mentee_probe)
 
       mentee = batch_norm_relu(mentee, training, self.data_format)
@@ -526,7 +546,7 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
                     distillation_coeff, probes_coeff, resnet_size, num_probes,
                     weight_decay_coeff, learning_rate_fn_mentor, 
                     learning_rate_fn_mentee, learning_rate_fn_finetune,
-                    momentum, data_format, pool_probes,
+                    momentum, data_format, pool_probes, pool_type,
                     temperature=1, optimizer='momentum', 
                     loss_filter_fn=None):
   """Shared functionality for different resnet model_fns.
@@ -568,6 +588,7 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
       otherwise. If None, batch_normalization variables will be excluded
       from the loss.
     pool_probes: Downsampling for probes.
+    pool_type: 'max' or 'mean'.
     optimizer: 'adam', 'adadelta' and 'momentum' are options.
   Returns:
     EstimatorSpec parameterized according to the input params and the
@@ -577,7 +598,10 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
     # Generate a summary node for the images
     tf.summary.image('images', features, max_outputs=6)
 
-  model = model_class(resnet_size, pool_probes, data_format)
+  model = model_class(resnet_size = resnet_size,
+                      pool_probes = pool_probes, 
+                      pool_type = pool_type, 
+                      data_format = data_format)
   logits_mentor, logits_mentee, probe_cost = model(features, 
                                        mode == tf.estimator.ModeKeys.TRAIN)
 
@@ -826,7 +850,8 @@ def resnet_main(flags, model_function, input_function):
           'train_epochs_finetune': flags.train_epochs_finetune,
           'initial_learning_rate_mentor': flags.initial_learning_rate_mentor,
           'initial_learning_rate_mentee': flags.initial_learning_rate_mentee,
-        'initial_learning_rate_finetune': flags.initial_learning_rate_finetune,          
+        'initial_learning_rate_finetune': flags.initial_learning_rate_finetune,
+          'pool_type': flags.pool_type,          
           'trainee': 'mentor'
       })
 
@@ -881,7 +906,8 @@ def resnet_main(flags, model_function, input_function):
           'train_epochs_finetune': flags.train_epochs_finetune,
           'initial_learning_rate_mentor': flags.initial_learning_rate_mentor,
           'initial_learning_rate_mentee': flags.initial_learning_rate_mentee,
-        'initial_learning_rate_finetune': flags.initial_learning_rate_finetune,                                                  
+        'initial_learning_rate_finetune': flags.initial_learning_rate_finetune, 
+          'pool_type': flags.pool_type,                                                 
           'trainee': 'mentee'
       })
 
@@ -938,7 +964,8 @@ def resnet_main(flags, model_function, input_function):
           'train_epochs_finetune': flags.train_epochs_finetune,
           'initial_learning_rate_mentor': flags.initial_learning_rate_mentor,
           'initial_learning_rate_mentee': flags.initial_learning_rate_mentee,
-        'initial_learning_rate_finetune': flags.initial_learning_rate_finetune,                                   
+        'initial_learning_rate_finetune': flags.initial_learning_rate_finetune,
+          'pool_type': flags.pool_type,                                   
           'trainee': 'finetune'
       })
 
@@ -1081,4 +1108,8 @@ class ResnetArgParser(argparse.ArgumentParser):
 
     self.add_argument(
         '--initial_learning_rate_finetune', type=float, default=0.001,
-        help='Set initial learning rate finetune')                 
+        help='Set initial learning rate finetune')     
+
+    self.add_argument(
+        '--pool_type', type=str, default='max',
+        help='Pool type for probes.')                       

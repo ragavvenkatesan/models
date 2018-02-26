@@ -32,7 +32,7 @@ DATA_URL = 'https://www.cs.toronto.edu/~kriz/cifar-100-binary.tar.gz'
 parser = argparse.ArgumentParser()
 
 parser.add_argument(
-    '--data_dir', type=str, default='/tmp/cifar10_data',
+    '--data_dir', type=str, default='cifar100_data',
     help='Directory to download data and extract the tarball')
 
 
@@ -56,7 +56,6 @@ def main(unused_argv):
     print('Successfully downloaded', filename, statinfo.st_size, 'bytes.')
 
   tarfile.open(filepath, 'r:gz').extractall(FLAGS.data_dir)
-
 
 if __name__ == '__main__':
   FLAGS, unparsed = parser.parse_known_args()
