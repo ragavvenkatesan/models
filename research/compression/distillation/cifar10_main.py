@@ -188,8 +188,8 @@ def cifar10_model_fn(features, labels, mode, params):
       batch_size=params['batch_size'], batch_denom=128,
       num_images=_NUM_IMAGES['train'], 
       boundary_epochs=[ epochs_1 + epochs_2//4,
-                       epochs_1 + epochs_2//2,
-                       epochs_1 + 3 * epochs_2//4],
+                       epochs_1 + 3*epochs_2//4,
+                       epochs_1 + 7 * epochs_2//8],
       initial_learning_rate = params['initial_learning_rate_mentee'],
       decay_rates=[1, 0.1, 0.01, 0.001])
   
@@ -198,8 +198,8 @@ def cifar10_model_fn(features, labels, mode, params):
       batch_size=params['batch_size'], batch_denom=128,
       num_images=_NUM_IMAGES['train'], 
       boundary_epochs=[epochs_1 + epochs_2 + epochs_3 //4,
-                       epochs_1 + epochs_2 + epochs_3//2,
-                       epochs_1 + epochs_2 + 3*epochs_3//4],
+                       epochs_1 + epochs_2 + 3*epochs_3//4,
+                       epochs_1 + epochs_2 + 7*epochs_3//8],
       initial_learning_rate = params['initial_learning_rate_finetune'],
       decay_rates=[1, 0.1, 0.01, 0.001])
 
@@ -241,23 +241,23 @@ if __name__ == '__main__':
                       model_dir='./cifar10_model',
                       resnet_size_mentee=1 * 6+2,
                       resnet_size_mentor=10 * 6+2,
-                      train_epochs_mentor=150,
-                      train_epochs_mentee=150,
-                      train_epochs_finetune=150,
+                      train_epochs_mentor=100,
+                      train_epochs_mentee=75,
+                      train_epochs_finetune=75,
                       epochs_per_eval=10,
                       distillation_coeff=0.1,
-                      probes_coeff=0.01,
-                      temperature=5,
-                      mentee_optimizer='adam',
+                      probes_coeff=0.1,
+                      temperature=2,
+                      mentee_optimizer='momentum',
                       mentor_optimizer='momentum',
                       finetune_optimizer='momentum',
-                      initial_learning_rate_mentor = 0.01,
-                      initial_learning_rate_mentee = 0.0001,
-                      initial_learning_rate_finetune = 0.001,
+                      initial_learning_rate_mentor = 0.03,
+                      initial_learning_rate_mentee = 0.03,
+                      initial_learning_rate_finetune = 0.003,
                       pool_probes = 2,
-                      pool_type = 'mean',
-                      weight_decay_coeff=0.000002,
-                      batch_size=500)
+                      pool_type = 'max',
+                      weight_decay_coeff=0.0002,
+                      batch_size=128)
 
   FLAGS, unparsed = parser.parse_known_args()
   tf.app.run(argv=[sys.argv[0]] + unparsed)

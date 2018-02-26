@@ -279,7 +279,7 @@ class Model(object):
   def __init__(self, resnet_size, num_classes, num_filters, kernel_size,
                conv_stride, first_pool_size, first_pool_stride, probe_pool_size,
                second_pool_size, second_pool_stride, probe_pool_stride,
-               block_fn, block_sizes, pool_type,
+               block_fn, block_sizes, pool_type, num_probes,
                block_strides, final_size, data_format=None):
     """Creates a model for classifying an image.
 
@@ -333,6 +333,7 @@ class Model(object):
     self.block_strides = block_strides
     self.final_size = final_size
     self.pool_type = pool_type
+    self.num_probes = num_probes
 
   def __call__(self, inputs, training):
     """Add operations to classify a batch of input images.
@@ -366,6 +367,7 @@ class Model(object):
         mentor = tf.identity(mentor, 'mentor_' + 'initial_max_pool')
 
       mentor_probes = []
+      probe_count = 0
       for i, num_blocks in enumerate(self.block_sizes[0]):
         num_filters = self.num_filters * (2**i)
         mentor = block_layer(
@@ -373,23 +375,25 @@ class Model(object):
             blocks=num_blocks, strides=self.block_strides[i],
             training=training, name='mentor_' + 'block_layer{}'.format(i + 1),
             data_format=self.data_format)
-        if self.probe_pool_size > 0:
-          if self.pool_type == 'max':
-            mentor_probe = tf.layers.max_pooling2d(
-                inputs=mentor, pool_size=self.probe_pool_size,
-                strides=self.probe_pool_stride, padding='SAME',
-                data_format=self.data_format)
-            mentor_probe = tf.identity(mentor, 'mentor_'+'probe_max_pool_' \
-                                              + str(i))
-          elif self.pool_type == 'mean':
-            mentor_probe = tf.layers.average_pooling2d(
-                inputs=mentor, pool_size=self.probe_pool_size,
-                strides=self.probe_pool_stride, padding='SAME',
-                data_format=self.data_format)
-            mentor_probe = tf.identity(mentor, 'mentor_'+'probe_mean_pool_' \
-                                              + str(i))            
+            
+        if probe_count < self.num_probes: 
+          if self.probe_pool_size > 0:
+            if self.pool_type == 'max':
+              mentor_probe = tf.layers.max_pooling2d(
+                  inputs=mentor, pool_size=self.probe_pool_size,
+                  strides=self.probe_pool_stride, padding='SAME',
+                  data_format=self.data_format)
+              mentor_probe = tf.identity(mentor, 'mentor_'+'probe_max_pool_' \
+                                                + str(i))
+            elif self.pool_type == 'mean':
+              mentor_probe = tf.layers.average_pooling2d(
+                  inputs=mentor, pool_size=self.probe_pool_size,
+                  strides=self.probe_pool_stride, padding='SAME',
+                  data_format=self.data_format)
+              mentor_probe = tf.identity(mentor, 'mentor_'+'probe_mean_pool_' \
+                                                + str(i))   
           mentor_probes.append(mentor_probe)
-
+          probe_count+=1
       mentor = batch_norm_relu(mentor, training, self.data_format)
       mentor = tf.layers.average_pooling2d(
           inputs=mentor, pool_size=self.second_pool_size,
@@ -415,7 +419,8 @@ class Model(object):
             strides=self.first_pool_stride, padding='SAME',
             data_format=self.data_format)
         mentee = tf.identity(mentee, 'mentee_' + 'initial_max_pool')
-
+      
+      probe_count = 0
       mentee_probes = []
       for i, num_blocks in enumerate(self.block_sizes[1]):
         num_filters = self.num_filters * (2**i)
@@ -424,23 +429,24 @@ class Model(object):
             blocks=num_blocks, strides=self.block_strides[i],
             training=training, name='mentee_' + 'block_layer{}'.format(i + 1),
             data_format=self.data_format)
-
-        if self.probe_pool_size > 0:
-          if self.pool_type == 'max':
-            mentee_probe = tf.layers.max_pooling2d(
-                inputs=mentee, pool_size=self.probe_pool_size,
-                strides=self.probe_pool_stride, padding='SAME',
-                data_format=self.data_format)
-            mentee_probe = tf.identity(mentee, 'mentee_'+'probe_max_pool_' \
-                                              + str(i))
-          if self.pool_type == 'mean':
-            mentee_probe = tf.layers.average_pooling2d(
-                inputs=mentee, pool_size=self.probe_pool_size,
-                strides=self.probe_pool_stride, padding='SAME',
-                data_format=self.data_format)
-            mentee_probe = tf.identity(mentee, 'mentee_'+'probe_max_pool_' \
-                                              + str(i))                                              
+        if probe_count < self.num_probes: 
+          if self.probe_pool_size > 0:
+            if self.pool_type == 'max':
+              mentee_probe = tf.layers.max_pooling2d(
+                  inputs=mentee, pool_size=self.probe_pool_size,
+                  strides=self.probe_pool_stride, padding='SAME',
+                  data_format=self.data_format)
+              mentee_probe = tf.identity(mentee, 'mentee_'+'probe_max_pool_' \
+                                                + str(i))
+            elif self.pool_type == 'mean':
+              mentee_probe = tf.layers.average_pooling2d(
+                  inputs=mentee, pool_size=self.probe_pool_size,
+                  strides=self.probe_pool_stride, padding='SAME',
+                  data_format=self.data_format)
+              mentee_probe = tf.identity(mentee, 'mentee_'+'probe_max_pool_' \
+                                                + str(i))                                       
           mentee_probes.append(mentee_probe)
+          probe_count+=1
 
       mentee = batch_norm_relu(mentee, training, self.data_format)
       mentee = tf.layers.average_pooling2d(
@@ -601,6 +607,7 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
   model = model_class(resnet_size = resnet_size,
                       pool_probes = pool_probes, 
                       pool_type = pool_type, 
+                      num_pobes = num_probes,
                       data_format = data_format)
   logits_mentor, logits_mentee, probe_cost = model(features, 
                                        mode == tf.estimator.ModeKeys.TRAIN)

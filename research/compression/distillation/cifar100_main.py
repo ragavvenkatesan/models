@@ -49,7 +49,6 @@ def get_filenames(is_training, data_dir):
   assert os.path.exists(data_dir), (
       'Run cifar100_download_and_extract.py first to download and extract the '
       'CIFAR-100 data.')
-
   if is_training:
     return [os.path.join(data_dir, 'train.bin')]
   else:
@@ -235,24 +234,25 @@ if __name__ == '__main__':
   parser.set_defaults(data_dir='./cifar100_data',
                       model_dir='./cifar100_model',
                       resnet_size_mentee=1 * 6+2,
-                      resnet_size_mentor=10 * 6+2,
-                      train_epochs_mentor=150,
-                      train_epochs_mentee=150,
-                      train_epochs_finetune=150,
+                      resnet_size_mentor=1 * 6+2,
+                      train_epochs_mentor=100,
+                      train_epochs_mentee=200,
+                      train_epochs_finetune=100,
                       epochs_per_eval=10,
-                      distillation_coeff=0.1,
-                      probes_coeff=0.01,
-                      temperature=5,
-                      mentee_optimizer='adam',
+                      distillation_coeff=0.99,
+                      probes_coeff=0.1,
+                      temperature=4,
+                      mentee_optimizer='momentum',
                       mentor_optimizer='momentum',
                       finetune_optimizer='momentum',
-                      initial_learning_rate_mentor = 0.01,
-                      initial_learning_rate_mentee = 0.0001,
-                      initial_learning_rate_finetune = 0.001,
-                      pool_probes = 2,
-                      pool_type = 'mean',
-                      weight_decay_coeff=0.000002,
-                      batch_size=500)
+                      initial_learning_rate_mentor = 0.03,
+                      initial_learning_rate_mentee = 0.03,
+                      initial_learning_rate_finetune = 0.003,
+                      pool_probes = 0,
+                      num_probes = 3,
+                      pool_type = 'max',
+                      weight_decay_coeff=0.0002,
+                      batch_size=128)
 
   FLAGS, unparsed = parser.parse_known_args()
   tf.app.run(argv=[sys.argv[0]] + unparsed)
