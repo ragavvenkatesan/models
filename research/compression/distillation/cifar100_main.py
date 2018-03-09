@@ -124,7 +124,8 @@ def input_fn(is_training, data_dir, batch_size, num_epochs=1,
 ###############################################################################
 class Cifar100Model(resnet.Model):
 
-  def __init__(self, resnet_size, pool_probes, pool_type, data_format=None, 
+  def __init__(self, resnet_size, pool_probes, num_probes, 
+               pool_type, data_format=None, 
                num_classes=_NUM_CLASSES):
     """These are the parameters that work for CIFAR-100 data.
 
@@ -156,6 +157,7 @@ class Cifar100Model(resnet.Model):
         second_pool_stride=1,
         probe_pool_stride=1,
         pool_type=pool_type,
+        num_probes = num_probes,
         probe_pool_size = pool_probes,
         block_fn=resnet.building_block,
         block_sizes=[ [num_blocks[0]] * 3, [num_blocks[1]] * 3 ],
@@ -234,21 +236,21 @@ if __name__ == '__main__':
   parser.set_defaults(data_dir='./cifar100_data',
                       model_dir='./cifar100_model',
                       resnet_size_mentee=1 * 6+2,
-                      resnet_size_mentor=1 * 6+2,
+                      resnet_size_mentor=10 * 6+2,
                       train_epochs_mentor=100,
                       train_epochs_mentee=200,
                       train_epochs_finetune=100,
                       epochs_per_eval=10,
                       distillation_coeff=0.99,
                       probes_coeff=0.1,
-                      temperature=4,
+                      temperature=6,
                       mentee_optimizer='momentum',
                       mentor_optimizer='momentum',
                       finetune_optimizer='momentum',
                       initial_learning_rate_mentor = 0.03,
                       initial_learning_rate_mentee = 0.03,
                       initial_learning_rate_finetune = 0.003,
-                      pool_probes = 0,
+                      pool_probes = 4,
                       num_probes = 3,
                       pool_type = 'max',
                       weight_decay_coeff=0.0002,

@@ -391,7 +391,9 @@ class Model(object):
                   strides=self.probe_pool_stride, padding='SAME',
                   data_format=self.data_format)
               mentor_probe = tf.identity(mentor, 'mentor_'+'probe_mean_pool_' \
-                                                + str(i))   
+                                                + str(i))  
+            else:
+              mentor_probe = mentor 
           mentor_probes.append(mentor_probe)
           probe_count+=1
       mentor = batch_norm_relu(mentor, training, self.data_format)
@@ -444,7 +446,9 @@ class Model(object):
                   strides=self.probe_pool_stride, padding='SAME',
                   data_format=self.data_format)
               mentee_probe = tf.identity(mentee, 'mentee_'+'probe_max_pool_' \
-                                                + str(i))                                       
+                                                + str(i))      
+            else:
+              mentee_probe=mentee                                 
           mentee_probes.append(mentee_probe)
           probe_count+=1
 
@@ -607,7 +611,7 @@ def resnet_model_fn(features, labels, mode, model_class, trainee,
   model = model_class(resnet_size = resnet_size,
                       pool_probes = pool_probes, 
                       pool_type = pool_type, 
-                      num_pobes = num_probes,
+                      num_probes = num_probes,
                       data_format = data_format)
   logits_mentor, logits_mentee, probe_cost = model(features, 
                                        mode == tf.estimator.ModeKeys.TRAIN)

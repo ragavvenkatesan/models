@@ -129,7 +129,8 @@ def input_fn(is_training, data_dir, batch_size, num_epochs=1,
 ###############################################################################
 class Cifar10Model(resnet.Model):
 
-  def __init__(self, resnet_size, pool_probes, pool_type, data_format=None, 
+  def __init__(self, resnet_size, pool_probes, pool_type, num_probes,
+               data_format=None, 
                num_classes=_NUM_CLASSES):
     """These are the parameters that work for CIFAR-10 data.
 
@@ -156,6 +157,7 @@ class Cifar10Model(resnet.Model):
         num_filters=16,
         kernel_size=3,
         conv_stride=1,
+        num_probes = num_probes,
         first_pool_size=None,
         first_pool_stride=None,
         second_pool_size=8,
@@ -240,14 +242,14 @@ if __name__ == '__main__':
   parser.set_defaults(data_dir='./cifar10_data',
                       model_dir='./cifar10_model',
                       resnet_size_mentee=1 * 6+2,
-                      resnet_size_mentor=10 * 6+2,
+                      resnet_size_mentor=1 * 6+2,
                       train_epochs_mentor=100,
-                      train_epochs_mentee=75,
-                      train_epochs_finetune=75,
+                      train_epochs_mentee=200,
+                      train_epochs_finetune=100,
                       epochs_per_eval=10,
-                      distillation_coeff=0.1,
+                      distillation_coeff=0.99,
                       probes_coeff=0.1,
-                      temperature=2,
+                      temperature=1.5,
                       mentee_optimizer='momentum',
                       mentor_optimizer='momentum',
                       finetune_optimizer='momentum',
@@ -255,9 +257,10 @@ if __name__ == '__main__':
                       initial_learning_rate_mentee = 0.03,
                       initial_learning_rate_finetune = 0.003,
                       pool_probes = 2,
+                      num_probes = 3,
                       pool_type = 'max',
                       weight_decay_coeff=0.0002,
-                      batch_size=128)
+                      batch_size=500)
 
   FLAGS, unparsed = parser.parse_known_args()
   tf.app.run(argv=[sys.argv[0]] + unparsed)
