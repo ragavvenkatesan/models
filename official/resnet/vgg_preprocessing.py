@@ -34,9 +34,9 @@ from __future__ import print_function
 
 import tensorflow as tf
 
-_R_MEAN = 123.68 / 255
-_G_MEAN = 116.78 / 255
-_B_MEAN = 103.94 / 255
+_R_MEAN = 123.68
+_G_MEAN = 116.78
+_B_MEAN = 103.94
 
 _RESIZE_SIDE_MIN = 256
 _RESIZE_SIDE_MAX = 512
@@ -64,7 +64,6 @@ def _random_crop_and_flip(image, crop_height, crop_width):
   height, width = _get_h_w(image)
 
   # Create a random bounding box.
-  #
   # Use tf.random_uniform and not numpy.random.rand as doing the former would
   # generate random numbers at graph eval time, unlike the latter which
   # generates random numbers at graph definition time.
@@ -78,6 +77,7 @@ def _random_crop_and_flip(image, crop_height, crop_width):
 
   cropped = tf.image.random_flip_left_right(cropped)
   return cropped
+
 
 def _central_crop(image, crop_height, crop_width):
   """Performs central crops of the given image list.
@@ -147,7 +147,7 @@ def _smallest_size_at_least(height, width, smallest_side):
 
   Returns:
     new_height: an int32 scalar tensor indicating the new height.
-    new_width: and int32 scalar tensor indicating the new width.
+    new_width: an int32 scalar tensor indicating the new width.
   """
   smallest_side = tf.cast(smallest_side, tf.float32)
 

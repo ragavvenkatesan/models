@@ -125,27 +125,20 @@ class BaseTest(tf.test.TestCase):
   def test_tensor_shapes_resnet_200_with_gpu(self):
     self.tensor_shapes_helper(200, True)
 
-  def input_fn(self):
-    """Provides random features and labels."""
-    features = tf.random_uniform([_BATCH_SIZE, 224, 224, 3])
-    labels = tf.one_hot(
-        tf.random_uniform(
-            [_BATCH_SIZE], maxval=_LABEL_CLASSES - 1,
-            dtype=tf.int32),
-        _LABEL_CLASSES)
-
-    return features, labels
-
-  def resnet_model_fn_helper(self, mode):
+  def resnet_model_fn_helper(self, mode, multi_gpu=False):
     """Tests that the EstimatorSpec is given the appropriate arguments."""
     tf.train.create_global_step()
 
-    features, labels = self.input_fn()
+    input_fn = imagenet_main.get_synth_input_fn()
+    dataset = input_fn(True, '', _BATCH_SIZE)
+    iterator = dataset.make_one_shot_iterator()
+    features, labels = iterator.get_next()
     spec = imagenet_main.imagenet_model_fn(
         features, labels, mode, {
             'resnet_size': 50,
             'data_format': 'channels_last',
             'batch_size': _BATCH_SIZE,
+            'multi_gpu': multi_gpu,
         })
 
     predictions = spec.predictions
@@ -170,6 +163,9 @@ class BaseTest(tf.test.TestCase):
   def test_resnet_model_fn_train_mode(self):
     self.resnet_model_fn_helper(tf.estimator.ModeKeys.TRAIN)
 
+  def test_resnet_model_fn_train_mode_multi_gpu(self):
+    self.resnet_model_fn_helper(tf.estimator.ModeKeys.TRAIN, multi_gpu=True)
+
   def test_resnet_model_fn_eval_mode(self):
     self.resnet_model_fn_helper(tf.estimator.ModeKeys.EVAL)
 
@@ -190,3 +186,4 @@ class BaseTest(tf.test.TestCase):
 
 if __name__ == '__main__':
   tf.test.main()
+

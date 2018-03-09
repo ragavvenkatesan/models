@@ -46,9 +46,11 @@ _BATCH_NORM_EPSILON = 1e-5
 # Functions for input processing.
 ################################################################################
 def process_record_dataset(dataset, is_training, batch_size, shuffle_buffer,
-                           parse_record_fn, num_epochs=1, num_parallel_calls=1):
+                           parse_record_fn, num_epochs=1, num_parallel_calls=1,
+                           examples_per_epoch=0, multi_gpu=False):
   """Given a Dataset with raw records, parse each record into images and labels,
   and return an iterator over the records.
+
   Args:
     dataset: A Dataset representing raw records
     is_training: A boolean denoting whether the input is for training.
@@ -62,6 +64,12 @@ def process_record_dataset(dataset, is_training, batch_size, shuffle_buffer,
     num_parallel_calls: The number of records that are processed in parallel.
       This can be optimized per data set but for generally homogeneous data
       sets, should be approximately the number of available CPU cores.
+    examples_per_epoch: The number of examples in the current set that
+      are processed each epoch. Note that this is only used for multi-GPU mode,
+      and only to handle what will eventually be handled inside of Estimator.
+    multi_gpu: Whether this is run multi-GPU. Note that this is only required
+      currently to handle the batch leftovers (see below), and can be removed
+      when that is handled directly by Estimator.
 
   Returns:
     Dataset of (image, label) pairs ready for iteration.
@@ -78,6 +86,18 @@ def process_record_dataset(dataset, is_training, batch_size, shuffle_buffer,
   # dataset for the appropriate number of epochs.
   dataset = dataset.repeat(num_epochs)
 
+  # Currently, if we are using multiple GPUs, we can't pass in uneven batches.
+  # (For example, if we have 4 GPUs, the number of examples in each batch
+  # must be divisible by 4.) We already ensured this for the batch_size, but
+  # we have to additionally ensure that any "leftover" examples-- the remainder
+  # examples (total examples % batch_size) that get called a batch for the very
+  # last batch of an epoch-- do not raise an error when we try to split them
+  # over the GPUs. This will likely be handled by Estimator during replication
+  # in the future, but for now, we just drop the leftovers here.
+  if multi_gpu:
+    total_examples = num_epochs * examples_per_epoch
+    dataset = dataset.take(batch_size * (total_examples // batch_size))
+
   # Parse the raw records into images and labels
   dataset = dataset.map(lambda value: parse_record_fn(value, is_training),
                         num_parallel_calls=num_parallel_calls)
@@ -91,6 +111,31 @@ def process_record_dataset(dataset, is_training, batch_size, shuffle_buffer,
   dataset = dataset.prefetch(1)
 
   return dataset
+
+
+def get_synth_input_fn(height, width, num_channels, num_classes):
+  """Returns an input function that returns a dataset with zeroes.
+
+  This is useful in debugging input pipeline performance, as it removes all
+  elements of file reading and image preprocessing.
+
+  Args:
+    height: Integer height that will be used to create a fake image tensor.
+    width: Integer width that will be used to create a fake image tensor.
+    num_channels: Integer depth that will be used to create a fake image tensor.
+    num_classes: Number of classes that should be represented in the fake labels
+      tensor
+
+  Returns:
+    An input_fn that can be used in place of a real one to return a dataset
+    that can be used for iteration.
+  """
+  def input_fn(is_training, data_dir, batch_size, *args):
+    images = tf.zeros((batch_size, height, width, num_channels), tf.float32)
+    labels = tf.zeros((batch_size, num_classes), tf.int32)
+    return tf.data.Dataset.from_tensors((images, labels)).repeat()
+
+  return input_fn
 
 
 ################################################################################
@@ -418,7 +463,7 @@ def learning_rate_with_decay(
 
 def resnet_model_fn(features, labels, mode, model_class,
                     resnet_size, weight_decay, learning_rate_fn, momentum,
-                    data_format, loss_filter_fn=None):
+                    data_format, loss_filter_fn=None, multi_gpu=False):
   """Shared functionality for different resnet model_fns.
 
   Initializes the ResnetModel representing the model layers
@@ -446,6 +491,9 @@ def resnet_model_fn(features, labels, mode, model_class,
       True if the var should be included in loss calculation, and False
       otherwise. If None, batch_normalization variables will be excluded
       from the loss.
+    multi_gpu: If True, wrap the optimizer in a TowerOptimizer suitable for
+      data-parallel distribution across multiple GPUs.
+
   Returns:
     EstimatorSpec parameterized according to the input params and the
     current mode.
@@ -497,10 +545,12 @@ def resnet_model_fn(features, labels, mode, model_class,
         learning_rate=learning_rate,
         momentum=momentum)
 
-    # Batch norm requires update ops to be added as a dependency to train_op
+    # If we are running multi-GPU, we need to wrap the optimizer.
+    if multi_gpu:
+      optimizer = tf.contrib.estimator.TowerOptimizer(optimizer)
+
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-    with tf.control_dependencies(update_ops):
-      train_op = optimizer.minimize(loss, global_step)
+    train_op = tf.group(optimizer.minimize(loss, global_step), update_ops)
   else:
     train_op = None
 
@@ -520,18 +570,64 @@ def resnet_model_fn(features, labels, mode, model_class,
       eval_metric_ops=metrics)
 
 
+def validate_batch_size_for_multi_gpu(batch_size):
+  """For multi-gpu, batch-size must be a multiple of the number of
+  available GPUs.
+
+  Note that this should eventually be handled by replicate_model_fn
+  directly. Multi-GPU support is currently experimental, however,
+  so doing the work here until that feature is in place.
+  """
+  from tensorflow.python.client import device_lib
+
+  local_device_protos = device_lib.list_local_devices()
+  num_gpus = sum([1 for d in local_device_protos if d.device_type == 'GPU'])
+  if not num_gpus:
+    raise ValueError('Multi-GPU mode was specified, but no GPUs '
+      'were found. To use CPU, run without --multi_gpu.')
+
+  remainder = batch_size % num_gpus
+  if remainder:
+    err = ('When running with multiple GPUs, batch size '
+      'must be a multiple of the number of available GPUs. '
+      'Found {} GPUs with a batch size of {}; try --batch_size={} instead.'
+      ).format(num_gpus, batch_size, batch_size - remainder)
+    raise ValueError(err)
+
+
 def resnet_main(flags, model_function, input_function):
   # Using the Winograd non-fused algorithms provides a small performance boost.
   os.environ['TF_ENABLE_WINOGRAD_NONFUSED'] = '1'
 
-  # Set up a RunConfig to only save checkpoints once per training cycle.
-  run_config = tf.estimator.RunConfig().replace(save_checkpoints_secs=1e9)
+  if flags.multi_gpu:
+    validate_batch_size_for_multi_gpu(flags.batch_size)
+
+    # There are two steps required if using multi-GPU: (1) wrap the model_fn,
+    # and (2) wrap the optimizer. The first happens here, and (2) happens
+    # in the model_fn itself when the optimizer is defined.
+    model_function = tf.contrib.estimator.replicate_model_fn(
+        model_function,
+        loss_reduction=tf.losses.Reduction.MEAN)
+
+  # Create session config based on values of inter_op_parallelism_threads and
+  # intra_op_parallelism_threads. Note that we default to having
+  # allow_soft_placement = True, which is required for multi-GPU and not
+  # harmful for other modes.
+  session_config = tf.ConfigProto(
+      inter_op_parallelism_threads=flags.inter_op_parallelism_threads,
+      intra_op_parallelism_threads=flags.intra_op_parallelism_threads,
+      allow_soft_placement=True)
+
+  # Set up a RunConfig to save checkpoint and set session config.
+  run_config = tf.estimator.RunConfig().replace(save_checkpoints_secs=1e9,
+                                                session_config=session_config)
   classifier = tf.estimator.Estimator(
       model_fn=model_function, model_dir=flags.model_dir, config=run_config,
       params={
           'resnet_size': flags.resnet_size,
           'data_format': flags.data_format,
           'batch_size': flags.batch_size,
+          'multi_gpu': flags.multi_gpu,
       })
 
   for _ in range(flags.train_epochs // flags.epochs_per_eval):
@@ -548,7 +644,8 @@ def resnet_main(flags, model_function, input_function):
 
     def input_fn_train():
       return input_function(True, flags.data_dir, flags.batch_size,
-                            flags.epochs_per_eval, flags.num_parallel_calls)
+                            flags.epochs_per_eval, flags.num_parallel_calls,
+                            flags.multi_gpu)
 
     classifier.train(input_fn=input_fn_train, hooks=[logging_hook])
 
@@ -556,7 +653,7 @@ def resnet_main(flags, model_function, input_function):
     # Evaluate the model and print results
     def input_fn_eval():
       return input_function(False, flags.data_dir, flags.batch_size,
-                            1, flags.num_parallel_calls)
+                            1, flags.num_parallel_calls, flags.multi_gpu)
 
     eval_results = classifier.evaluate(input_fn=input_fn_eval)
     print(eval_results)
@@ -608,3 +705,24 @@ class ResnetArgParser(argparse.ArgumentParser):
              'is not always compatible with CPU. If left unspecified, '
              'the data format will be chosen automatically based on '
              'whether TensorFlow was built for CPU or GPU.')
+
+    self.add_argument(
+        '--multi_gpu', action='store_true',
+        help='If set, run across all available GPUs.')
+
+    # Advanced args
+    self.add_argument(
+        '--use_synthetic_data', action='store_true',
+        help='If set, use fake data (zeroes) instead of a real dataset. '
+             'This mode is useful for performance debugging, as it removes '
+             'input processing steps, but will not learn anything.')
+
+    self.add_argument(
+        '--inter_op_parallelism_threads', type=int, default=0,
+        help='Number of inter_op_parallelism_threads to use for CPU. '
+             'See TensorFlow config.proto for details.')
+
+    self.add_argument(
+        '--intra_op_parallelism_threads', type=int, default=0,
+        help='Number of intra_op_parallelism_threads to use for CPU. '
+             'See TensorFlow config.proto for details.')

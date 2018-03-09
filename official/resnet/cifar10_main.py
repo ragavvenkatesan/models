@@ -103,7 +103,7 @@ def preprocess_image(image, is_training):
 
 
 def input_fn(is_training, data_dir, batch_size, num_epochs=1,
-             num_parallel_calls=1):
+             num_parallel_calls=1, multi_gpu=False):
   """Input_fn using the tf.data input pipeline for CIFAR-10 dataset.
 
   Args:
@@ -114,6 +114,9 @@ def input_fn(is_training, data_dir, batch_size, num_epochs=1,
     num_parallel_calls: The number of records that are processed in parallel.
       This can be optimized per data set but for generally homogeneous data
       sets, should be approximately the number of available CPU cores.
+    multi_gpu: Whether this is run multi-GPU. Note that this is only required
+      currently to handle the batch leftovers, and can be removed
+      when that is handled directly by Estimator.
 
   Returns:
     A dataset that can be used for iteration.
@@ -121,8 +124,15 @@ def input_fn(is_training, data_dir, batch_size, num_epochs=1,
   filenames = get_filenames(is_training, data_dir)
   dataset = tf.data.FixedLengthRecordDataset(filenames, _RECORD_BYTES)
 
+  num_images = is_training and _NUM_IMAGES['train'] or _NUM_IMAGES['validation']
+
   return resnet.process_record_dataset(dataset, is_training, batch_size,
-      _NUM_IMAGES['train'], parse_record, num_epochs, num_parallel_calls)
+      _NUM_IMAGES['train'], parse_record, num_epochs, num_parallel_calls,
+      examples_per_epoch=num_images, multi_gpu=multi_gpu)
+
+
+def get_synth_input_fn():
+  return resnet.get_synth_input_fn(_HEIGHT, _WIDTH, _NUM_CHANNELS, _NUM_CLASSES)
 
 
 ###############################################################################
@@ -189,11 +199,13 @@ def cifar10_model_fn(features, labels, mode, params):
                                 learning_rate_fn=learning_rate_fn,
                                 momentum=0.9,
                                 data_format=params['data_format'],
-                                loss_filter_fn=loss_filter_fn)
+                                loss_filter_fn=loss_filter_fn,
+                                multi_gpu=params['multi_gpu'])
 
 
 def main(unused_argv):
-  resnet.resnet_main(FLAGS, cifar10_model_fn, input_fn)
+  input_function = FLAGS.use_synthetic_data and get_synth_input_fn() or input_fn
+  resnet.resnet_main(FLAGS, cifar10_model_fn, input_function)
 
 
 if __name__ == '__main__':
