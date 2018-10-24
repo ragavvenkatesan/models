@@ -97,3 +97,8 @@ research/compression/distillation/tensorboards/
 research/compression/distillation/cifar10_data
 research/compression/distillation/cifar100_data
 research/.DS_Store
+
+# For mac
+.DS_Store
+
+samples/outreach/blogs/segmentation_blogpost/carvana-image-masking-challenge/
